@@ -1,0 +1,64 @@
+{
+  "comment": "M1 테스트 스테이지 — 기획서 11.3 텐션 커브: 워밍업 → 혼합 → 압박 → 최종. 하급(a-1/a-2/a-3 개체) 합계 40기 (기준 26기 이상), 중급 8기. 웨이브 간 휴지기 2~3초. t = 웨이브 시작 기준 초, formationCount = a-3 편대 규모(5~8).",
+  "waves": [
+    {
+      "name": "W1 워밍업 (저밀도)",
+      "restAfterSec": 3,
+      "entries": [
+        { "t": 1.0, "type": "a-1" },
+        { "t": 3.5, "type": "a-1" },
+        { "t": 5.5, "type": "a-2" },
+        { "t": 7.5, "type": "a-1" },
+        { "t": 9.5, "type": "a-2" }
+      ]
+    },
+    {
+      "name": "W2 혼합 저밀도",
+      "restAfterSec": 3,
+      "entries": [
+        { "t": 0.5, "type": "a-1" },
+        { "t": 1.8, "type": "a-2" },
+        { "t": 3.0, "type": "a-1" },
+        { "t": 4.2, "type": "a-2" },
+        { "t": 5.4, "type": "a-1" },
+        { "t": 6.6, "type": "a-2" }
+      ]
+    },
+    {
+      "name": "W3 편대 소개 + 체류형 (a-3, a-4)",
+      "restAfterSec": 3,
+      "entries": [
+        { "t": 1.0, "type": "a-3", "formationCount": 6 },
+        { "t": 4.0, "type": "a-4" },
+        { "t": 7.0, "type": "a-4" }
+      ]
+    },
+    {
+      "name": "W4 압박 (a-5 도입, 고밀도)",
+      "restAfterSec": 2,
+      "entries": [
+        { "t": 0.5, "type": "a-5" },
+        { "t": 2.0, "type": "a-3", "formationCount": 5 },
+        { "t": 4.5, "type": "a-5" },
+        { "t": 6.0, "type": "a-1" },
+        { "t": 7.0, "type": "a-1" }
+      ]
+    },
+    {
+      "name": "W5 최종 (최고 밀도)",
+      "restAfterSec": 0,
+      "entries": [
+        { "t": 0.5, "type": "a-1" },
+        { "t": 1.2, "type": "a-2" },
+        { "t": 2.0, "type": "a-3", "formationCount": 7 },
+        { "t": 4.0, "type": "a-4" },
+        { "t": 5.0, "type": "a-5" },
+        { "t": 6.0, "type": "a-2" },
+        { "t": 7.0, "type": "a-3", "formationCount": 5 },
+        { "t": 8.5, "type": "a-4" },
+        { "t": 9.5, "type": "a-1" },
+        { "t": 10.5, "type": "a-5" }
+      ]
+    }
+  ]
+}
