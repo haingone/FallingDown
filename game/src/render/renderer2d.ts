@@ -14,6 +14,7 @@ import type { Sim, Enemy, EnemyType } from '../core/sim';
 import { config, speedT } from '../core/balance';
 import { SlashTrails } from './slash';
 import { SpriteTextures } from './sprites';
+import { JuiceFx } from './juice';
 
 const ENEMY_COLOR: Record<EnemyType, number> = {
   'a-1': 0x8e97a8,
@@ -29,20 +30,11 @@ const GIRL_HEIGHT = 0.22;   // 필드 단위 (1.0 = 화면 폭)
 const ENEMY_SIZE = 0.14;
 const RUIN_COUNT = 9;
 const SPEEDLINE_COUNT = 70;
-const BURST_COUNT = 8;
-const BURST_POINTS = 12;
 
 interface EnemyView {
   mesh: THREE.Mesh;
   mat: THREE.MeshBasicMaterial;
   type: EnemyType | null;
-}
-
-interface Burst {
-  points: THREE.Points;
-  mat: THREE.PointsMaterial;
-  vel: Float32Array;
-  life: number;
 }
 
 interface Ruin {
@@ -76,13 +68,16 @@ const BAND_FRAG = /* glsl */`
   precision mediump float;
   uniform vec3 uColor;
   uniform float uAlpha;
+  uniform float uHit;                      // 격파 순간 플래시 0..1 (r3 항목 5)
   varying vec2 vUv;
   void main() {
     float d = abs(vUv.y * 2.0 - 1.0);      // 0 = 중앙, 1 = 경계
-    float edge = smoothstep(0.82, 1.0, d); // 경계선
-    float fill = (1.0 - d) * 0.16;         // 내부 발광
+    float edgeStart = 0.82 - 0.16 * uHit;  // 히트 시 경계선이 두꺼워진다
+    float edge = smoothstep(edgeStart, 1.0, d);
+    float fill = (1.0 - d) * (0.16 + 0.30 * uHit);
     float a = (edge * 0.95 + fill) * uAlpha;
-    gl_FragColor = vec4(uColor * (0.55 + 0.45 * edge), a);
+    vec3 col = mix(uColor, vec3(1.0), 0.75 * uHit);
+    gl_FragColor = vec4(col * (0.55 + 0.45 * edge) * (1.0 + 0.9 * uHit), a);
   }
 `;
 
@@ -133,7 +128,7 @@ export class Renderer2D {
   private speedLines: THREE.LineSegments;
   private speedLinePos: Float32Array;
   private speedLineMat: THREE.LineBasicMaterial;
-  private bursts: Burst[] = [];
+  private juice: JuiceFx;
 
   private cssWidth = 390;
   private drawCallCount = 0;
@@ -214,6 +209,7 @@ export class Renderer2D {
       uniforms: {
         uColor: { value: new THREE.Color(0x6fd0ff) },
         uAlpha: { value: 0.9 },
+        uHit: { value: 0 },
       },
       transparent: true,
       depthTest: false,
@@ -263,16 +259,8 @@ export class Renderer2D {
     this.speedLines.frustumCulled = false;
     this.sceneGame.add(this.speedLines);
 
-    for (let i = 0; i < BURST_COUNT; i++) {
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BURST_POINTS * 3), 3));
-      const mat = new THREE.PointsMaterial({ color: 0xfff0a8, size: 0.02, transparent: true, opacity: 0 });
-      const points = new THREE.Points(g, mat);
-      points.visible = false;
-      points.frustumCulled = false;
-      this.sceneGame.add(points);
-      this.bursts.push({ points, mat, vel: new Float32Array(BURST_POINTS * 3), life: 0 });
-    }
+    // 격파 피드백 (r3 손맛 주스) — 파편·플래시·스케일 팝·카메라 펀치·밴드 플래시
+    this.juice = new JuiceFx(this.sceneGame, 0.24);
 
     this.slash = new SlashTrails(this.sceneGame, 0.3);
   }
@@ -341,6 +329,7 @@ export class Renderer2D {
    */
   setSize(cssWidth: number, cssHeight: number, dpr: number): void {
     this.cssWidth = cssWidth;
+    this.juice.setPixelsPerUnit(cssWidth);
     const canvas = this.renderer.domElement;
 
     if (config.pixelScaleMode === 'pixel') {
@@ -372,21 +361,17 @@ export class Renderer2D {
     this.sky.scale.set(h * this.camWorld.aspect, h, 1);
   }
 
-  spawnBurst(x: number, y: number): void {
-    const b = this.bursts.find(bb => bb.life <= 0) ?? this.bursts[0];
-    const pos = b.points.geometry.getAttribute('position') as THREE.BufferAttribute;
-    for (let i = 0; i < BURST_POINTS; i++) {
-      pos.setXYZ(i, x, y, 0.25);
-      const a = Math.random() * Math.PI * 2;
-      const sp = 0.25 + Math.random() * 0.7;
-      b.vel[i * 3] = Math.cos(a) * sp;
-      b.vel[i * 3 + 1] = Math.sin(a) * sp;
-      b.vel[i * 3 + 2] = 0;
-    }
-    pos.needsUpdate = true;
-    b.life = 0.32;
-    b.points.visible = true;
-    b.mat.opacity = 1;
+  /**
+   * 격파 순간 연출 (r3 항목 1·2·3·5 일괄).
+   * @param dirX,dirY 스와이프 진행 방향 (필드 단위 정규화). 도약 자동 격파는 0,0 → 순수 방사
+   */
+  spawnKill(x: number, y: number, type: EnemyType, dirX: number, dirY: number): void {
+    this.juice.spawnKill(x, y, ENEMY_COLOR[type], dirX, dirY, this.textures.enemy(type), ENEMY_SIZE);
+  }
+
+  /** 프레임 시작 — 다중 격파 카메라 펀치 합산용 래치 해제 */
+  beginFrame(): void {
+    this.juice.beginFrame();
   }
 
   spawnSlash(startX: number, startY: number, endX: number, endY: number, stance: 'umbrella' | 'sword'): void {
@@ -396,6 +381,12 @@ export class Renderer2D {
   drawCalls(): number { return this.drawCallCount; }
   /** 현재 살아있는 베기 궤적 수 */
   slashActiveCount(): number { return this.slash.activeCount(); }
+  /** 현재 살아있는 격파 파편 수 (총량 상한 확인용) */
+  activeParticles(): number { return this.juice.activeParticles(); }
+  /** 현재 카메라 펀치 가산분 (연출 전용) */
+  punchAmount(): number { return this.juice.punchAmount(); }
+  /** 현재 밴드 히트 플래시 0..1 */
+  bandFlashAmount(): number { return this.juice.bandFlash(); }
   /** 오버드로우 추정: 화면을 덮는 반투명 레이어 수 */
   overdrawEstimate(): number {
     const clouds = this.cloudPlanes.filter(c => c.mesh.visible).length;
@@ -409,8 +400,9 @@ export class Renderer2D {
     const t = speedT(sim.speed);
     const scroll = config.scrollSpeedCoef * sim.speed * (sim.diveActive ? 2.2 : 1);
 
-    // ── 카메라: 줌은 field와 동일, 셰이크는 연출 전용 ──
-    this.camGame.zoom = sim.field.zoom;
+    // ── 카메라: 줌은 field와 동일 + 격파 펀치(연출 전용), 셰이크도 연출 전용 ──
+    this.juice.update(dtSec);
+    this.camGame.zoom = sim.field.zoom * (1 + this.juice.punchAmount());
     this.camGame.updateProjectionMatrix();
     this.shakeT += dtSec * 34;
     const shakeAmp = (config.shakeStrength / this.cssWidth) * (sim.diveActive ? 1.4 : t);
@@ -454,6 +446,7 @@ export class Renderer2D {
       this.band.scale.set(1.25, config.bandHeightFrac, 1);
       (this.bandMat.uniforms.uColor.value as THREE.Color).setHex(sim.diveActive ? 0xffd45e : 0x6fd0ff);
       this.bandMat.uniforms.uAlpha.value = sim.diveActive ? 1.0 : 0.9;
+      this.bandMat.uniforms.uHit.value = this.juice.bandFlash(); // r3 항목 5
     } else {
       this.ring.position.set(gx, gy, -1);
       this.ring.scale.setScalar(config.ringRadiusFrac);
@@ -517,20 +510,6 @@ export class Renderer2D {
     }
     (this.speedLines.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
 
-    for (const b of this.bursts) {
-      if (b.life <= 0) continue;
-      b.life -= dtSec;
-      if (b.life <= 0) { b.points.visible = false; continue; }
-      const pos = b.points.geometry.getAttribute('position') as THREE.BufferAttribute;
-      for (let i = 0; i < BURST_POINTS; i++) {
-        pos.setXYZ(i,
-          pos.getX(i) + b.vel[i * 3] * dtSec,
-          pos.getY(i) + b.vel[i * 3 + 1] * dtSec,
-          0.25);
-      }
-      pos.needsUpdate = true;
-      b.mat.opacity = b.life / 0.32;
-    }
     this.slash.update(dtSec);
 
     // ── 합성 ──

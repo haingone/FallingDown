@@ -121,9 +121,50 @@ test('HD-2D 최종 웨이브 실시간 FPS 실측 + 픽셀 스케일링 비교',
   const band = await sample(page);
   await page.evaluate(() => {
     const fd = (window as any).__fd;
-    fd.config.judgeArea = 'circle';
+    fd.config.judgeArea = 'band'; // 기본값(확정안) 복귀
     fd.config.contactDamage = 1;
   });
+
+  // r3 손맛: 격파 순간 캡처 (편대 다중 격파 + 단일 격파)
+  await page.evaluate(() => {
+    const fd = (window as any).__fd;
+    // 스크린샷 왕복 지연 동안 연출이 사라지지 않도록 지속만 늘린다 (강도·규격은 기본값)
+    fd.config.cameraPunchMs = 900;
+    fd.config.bandFlashMs = 900;
+    fd.config.deathPopMs = 900;
+    fd.config.burstLifeSec = 1.6;
+    fd.config.slashLifeSec = 2.0;
+    fd.sim.restart();
+    fd.sim.events.length = 0;
+  });
+  const killShot = async (n: number, path: string) => {
+    await page.evaluate(async (count) => {
+      const fd = (window as any).__fd;
+      const sim = fd.sim;
+      const pool = sim.enemies.filter((e: any) => !e.active).slice(0, count);
+      let i = 0;
+      for (const e of pool) {
+        e.active = true; e.type = i % 2 === 0 ? 'a-3' : 'a-1';
+        e.lifecycle = 'pass'; e.phase = 'ring'; e.hp = 1;
+        e.entryKind = 'down'; e.lastCountedHitMs = -1e9;
+        e.x = sim.girlX + (i - (count - 1) / 2) * 0.075;
+        e.y = sim.girlY + (i % 2 === 0 ? 0.03 : -0.03);
+        e.prevX = e.x; e.prevY = e.y;
+        i++;
+      }
+      // 화면을 가로지르는 스와이프로 관통 격파 (궤적 이펙트까지 함께 발동)
+      const p = sim.field.toScreen(sim.girlX, sim.girlY);
+      const a = sim.field.toField(20, p.y + 60);
+      const b = sim.field.toField(sim.field.width - 20, p.y - 60);
+      fd.renderer.spawnSlash(a.x, a.y, b.x, b.y, sim.stance);
+      const hits = sim.applySwipeSegment(20, p.y + 60, sim.field.width - 20, p.y - 60, sim.time * 1000 + 1);
+      sim.endSwipe(hits);
+      await new Promise<void>(r => requestAnimationFrame(() => r()));
+    }, n);
+    await page.screenshot({ path });
+  };
+  await killShot(7, 'test-results/screens/07-kill-formation.png');
+  await killShot(1, 'test-results/screens/08-kill-single.png');
 
   const out = { native, pixel, band, pixelBuffer };
   fs.writeFileSync('test-results/p1-perf-metrics.json', JSON.stringify(out, null, 2));

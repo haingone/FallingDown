@@ -35,6 +35,7 @@
     .hp.on { background: #ff4466; box-shadow: 0 0 6px #ff446699; }
     .hp.off { background: #333a4a; }
     #hud-right { position: absolute; top: max(8px, env(safe-area-inset-top)); right: 10px; font-size: 26px; font-weight: 800; text-shadow: 0 0 8px #000; }
+    #hud-mult { display: inline-block; transform-origin: right center; will-change: transform; }
     #hud-combo { font-size: 16px; color: #ffd24d; }
     #hud-wave { position: absolute; top: max(8px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); font-size: 12px; opacity: 0.65; }
     #hud-gauge {
@@ -58,6 +59,16 @@
     #hud-banner.clear { color: #7dffb0; }
     #hud-banner.fail { color: #ff5566; }
     #hud-flash { position: absolute; inset: 0; background: #ff2233; opacity: 0; pointer-events: none; }
+
+    /* ── 성능 통계 미니 오버레이 (?stats=1) ── */
+    #stats-overlay {
+      position: absolute; left: 8px; bottom: max(70px, calc(env(safe-area-inset-bottom) + 70px));
+      background: #0c101ac9; border: 1px solid #333a4a; border-radius: 6px;
+      padding: 5px 9px; font-size: 11px; line-height: 1.5; color: #9fd;
+      pointer-events: none; z-index: 9; font-variant-numeric: tabular-nums;
+    }
+    #stats-overlay b { font-size: 20px; color: #7dffb0; margin-right: 4px; }
+    #stats-overlay span { display: inline-block; margin-left: 8px; opacity: 0.85; }
 
     /* ── 튜닝 패널 ── */
     #panel { position: absolute; top: 0; right: 0; bottom: 0; pointer-events: none; z-index: 10; }

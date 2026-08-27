@@ -88,6 +88,34 @@ export interface BalanceConfig {
   objectDensity: number;       // ★ 3D 오브젝트 레이어 밀도 (0~1)
   hitstopMs: number;           // 히트스톱 40ms
   slashLifeSec: number;        // ★ 베기 궤적 잔광 지속 (액션 체감 튜닝 손잡이)
+
+  // ── r3 손맛 주스 (기획서 v2.2 16장 1번 "손맛" — 전부 프로시저럴/합성음, 항목별 조절) ──
+  /** 1. 파편 버스트: 적 색상 파편 수 / 흰 코어 스파크 수 / 분사 속도 / 지향성(0=방사, 1=스와이프 방향) */
+  burstDebrisCount: number;
+  burstSparkCount: number;
+  burstSpeed: number;
+  burstDirectionality: number;
+  burstLifeSec: number;
+  /** 파편 총량 상한 — 다중 격파 시 과부하 방지 */
+  particleBudget: number;
+  /** 2. 임팩트 플래시 강도(0=끔) / 격파 스프라이트 스케일 팝 지속 */
+  impactFlashStrength: number;
+  deathPopMs: number;
+  /** 3. 카메라 펀치 줌킥 비율(0=끔) / 복귀 시간 */
+  cameraPunch: number;
+  cameraPunchMs: number;
+  /** 4. 격파음: 전체 게인(0=끔) / 연속 격파 피치 스택 상한 / 동시발음 제한 */
+  killSoundGain: number;
+  killPitchStackMax: number;
+  soundVoiceLimit: number;
+  /** 5. 밴드 히트 플래시 강도(0=끔) / 지속 */
+  bandFlashStrength: number;
+  bandFlashMs: number;
+  /** 6. 배율 UI 펄스 강도(0=끔) */
+  uiPulseStrength: number;
+  /** 7. 다중 격파 시 히트스톱 연장 허용 + 상한 */
+  hitstopMultiEnabled: boolean;
+  hitstopMultiMaxMs: number;
   pixelScaleMode: PixelScaleMode; // 픽셀 스케일링 정책 검증 (기획서 v2 17장 7)
   pixelScaleFactor: number;    // 정수 배율 (2/3/4)
 
@@ -139,7 +167,7 @@ export const DEFAULT_BALANCE: BalanceConfig = {
   a5Hp: 1,
   projectileSpeed: 0.4,
 
-  judgeArea: 'circle',
+  judgeArea: 'band', // ✅ 2026-08-27 실기기 A/B 판정으로 확정 (기획서 v2.2 15장)
   ringRadiusFrac: 0.33,
   bandHeightFrac: 0.66, // = 원 지름 등가
   girlScreenFrac: 0.42,
@@ -158,6 +186,25 @@ export const DEFAULT_BALANCE: BalanceConfig = {
   objectDensity: 0.6,
   hitstopMs: 40,
   slashLifeSec: 0.3,
+
+  burstDebrisCount: 14,
+  burstSparkCount: 7,
+  burstSpeed: 1.15,
+  burstDirectionality: 0.6,
+  burstLifeSec: 0.42,
+  particleBudget: 220,
+  impactFlashStrength: 1.0,
+  deathPopMs: 140,
+  cameraPunch: 0.018,
+  cameraPunchMs: 70,
+  killSoundGain: 1.0,
+  killPitchStackMax: 6,
+  soundVoiceLimit: 4,
+  bandFlashStrength: 1.0,
+  bandFlashMs: 120,
+  uiPulseStrength: 0.35,
+  hitstopMultiEnabled: true,
+  hitstopMultiMaxMs: 60,
   pixelScaleMode: 'native',
   pixelScaleFactor: 3,
 

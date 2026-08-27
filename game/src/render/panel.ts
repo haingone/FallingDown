@@ -41,11 +41,11 @@ const FIELDS: Field[] = [
   { kind: 'slider', key: 'decelPerSec', label: '펼침 감속 (x/s)', min: 0.25, max: 3, step: 0.25 },
   // ── 2D 판정·동선 ──
   {
-    kind: 'select', key: 'judgeArea', label: '★ 판정 영역 (A/B)',
-    options: [['circle', 'A 원형 링'], ['band', 'B 화면 밴드']],
+    kind: 'select', key: 'judgeArea', label: '판정 영역',
+    options: [['band', 'B 화면 밴드 ✅확정'], ['circle', 'A 원형 링 (폐기 예정)']],
   },
-  { kind: 'slider', key: 'ringRadiusFrac', label: 'A: 링 반경 (화면 폭 비)', min: 0.15, max: 0.7, step: 0.01 },
   { kind: 'slider', key: 'bandHeightFrac', label: 'B: 밴드 높이 (화면 폭 비)', min: 0.15, max: 1.2, step: 0.01 },
+  { kind: 'slider', key: 'ringRadiusFrac', label: 'A: 링 반경 (폐기 예정)', min: 0.15, max: 0.7, step: 0.01 },
   { kind: 'slider', key: 'girlScreenFrac', label: '소녀 세로 위치 (0=상 1=하)', min: 0.25, max: 0.7, step: 0.01 },
   { kind: 'slider', key: 'dwellScale', label: '통과형 체류시간 배수', min: 0.5, max: 2.5, step: 0.1 },
   { kind: 'slider', key: 'attackPeriodScale', label: '체류형 공격주기 배수', min: 0.5, max: 2.5, step: 0.1 },
@@ -58,8 +58,27 @@ const FIELDS: Field[] = [
   { kind: 'slider', key: 'swordTrajWidthPt', label: '검 궤적 폭 (pt)', min: 4, max: 60, step: 2 },
   { kind: 'slider', key: 'umbrellaRejudgeMs', label: '우산 재판정 간격 (ms)', min: 40, max: 600, step: 20 },
   { kind: 'slider', key: 'swordRejudgeMs', label: '검 재판정 간격 (ms)', min: 20, max: 400, step: 10 },
-  { kind: 'slider', key: 'hitstopMs', label: '히트스톱 (ms)', min: 0, max: 100, step: 5 },
   { kind: 'slider', key: 'slashLifeSec', label: '베기 궤적 잔광 (s)', min: 0.1, max: 3, step: 0.05 },
+  // ── r3 손맛 주스 (격파 피드백) ──
+  { kind: 'slider', key: 'burstDebrisCount', label: '① 파편 수', min: 0, max: 40, step: 1 },
+  { kind: 'slider', key: 'burstSparkCount', label: '① 코어 스파크 수', min: 0, max: 20, step: 1 },
+  { kind: 'slider', key: 'burstSpeed', label: '① 파편 분사 속도', min: 0.2, max: 3, step: 0.05 },
+  { kind: 'slider', key: 'burstDirectionality', label: '① 파편 지향성 (0방사~1스와이프)', min: 0, max: 1, step: 0.05 },
+  { kind: 'slider', key: 'burstLifeSec', label: '① 파편 지속 (s)', min: 0.1, max: 1.2, step: 0.02 },
+  { kind: 'slider', key: 'particleBudget', label: '① 파편 총량 상한', min: 40, max: 260, step: 10 },
+  { kind: 'slider', key: 'impactFlashStrength', label: '② 임팩트 플래시 (0=끔)', min: 0, max: 2, step: 0.05 },
+  { kind: 'slider', key: 'deathPopMs', label: '② 스케일 팝 (ms, 0=끔)', min: 0, max: 400, step: 10 },
+  { kind: 'slider', key: 'cameraPunch', label: '③ 카메라 펀치 (0=끔)', min: 0, max: 0.06, step: 0.002 },
+  { kind: 'slider', key: 'cameraPunchMs', label: '③ 펀치 복귀 (ms)', min: 20, max: 250, step: 5 },
+  { kind: 'slider', key: 'killSoundGain', label: '④ 격파음 게인 (0=끔)', min: 0, max: 2, step: 0.05 },
+  { kind: 'slider', key: 'killPitchStackMax', label: '④ 피치 스택 상한 (반음)', min: 0, max: 12, step: 1 },
+  { kind: 'slider', key: 'soundVoiceLimit', label: '④ 동시발음 제한', min: 1, max: 8, step: 1 },
+  { kind: 'slider', key: 'bandFlashStrength', label: '⑤ 밴드 히트 플래시 (0=끔)', min: 0, max: 2, step: 0.05 },
+  { kind: 'slider', key: 'bandFlashMs', label: '⑤ 밴드 플래시 지속 (ms)', min: 20, max: 400, step: 10 },
+  { kind: 'slider', key: 'uiPulseStrength', label: '⑥ 배율 UI 펄스 (0=끔)', min: 0, max: 1, step: 0.05 },
+  { kind: 'slider', key: 'hitstopMs', label: '⑦ 히트스톱 (ms)', min: 0, max: 100, step: 5 },
+  { kind: 'toggle', key: 'hitstopMultiEnabled', label: '⑦ 다중 격파 히트스톱 연장' },
+  { kind: 'slider', key: 'hitstopMultiMaxMs', label: '⑦ 다중 격파 히트스톱 상한 (ms)', min: 40, max: 140, step: 5 },
   // ── 게이지 A/B (기획서 v2 17장 4) ──
   { kind: 'toggle', key: 'gaugeMultiplierEnabled', label: '★ 게이지에 배율 적용 (A/B)' },
   // ── HD-2D 연출 ──
@@ -88,7 +107,7 @@ export class Panel {
     private classifier: GestureClassifier,
     private perf: PerfTracker,
     private beeper: Beeper,
-    private stats: () => { drawCalls: number; overdraw: number },
+    private stats: () => { drawCalls: number; overdraw: number; particles: number },
     private onRestart: () => void,
     private onScaleModeChange: () => void,
   ) {
@@ -215,8 +234,9 @@ export class Panel {
     const lat = this.beeper.latencyMs();
     const rs = this.stats();
     const lines = [
+      `▶ FPS ${this.perf.fps().toFixed(0)}  1%low ${this.perf.onePercentLow().toFixed(0)}  draw ${rs.drawCalls}`,
       `sim ${sim.time.toFixed(1)}s  wave ${sim.waveIndex + 1}/${sim.waveCount} [${sim.state}]`,
-      `FPS ${this.perf.fps().toFixed(0)} / 1%low ${this.perf.onePercentLow().toFixed(0)}  draw ${rs.drawCalls}  overdraw~${rs.overdraw}`,
+      `파편 ${rs.particles}/${config.particleBudget}  overdraw~${rs.overdraw}`,
       `입력: 탭 ${s.taps} · 스와이프 ${s.swipes} · 무효 ${s.none}`,
       `오분류 의심 ${s.suspects}건 (${suspectRate}%)`,
       `속도 ${sim.speed.toFixed(2)}x  평균배율 ${sim.avgMultiplier.toFixed(2)}x  콤보 ${sim.combo}`,

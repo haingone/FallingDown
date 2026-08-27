@@ -69,7 +69,7 @@ export interface Projectile {
 
 export type SimEvent =
   | { type: 'ringEnter'; enemyId: number }
-  | { type: 'slashHit'; enemyId: number; killed: boolean; x: number; y: number }
+  | { type: 'slashHit'; enemyId: number; enemyType: EnemyType; killed: boolean; x: number; y: number }
   | { type: 'armorBreak'; enemyId: number }
   | { type: 'projectileDown'; x: number; y: number }
   | { type: 'playerHit'; hp: number }
@@ -121,6 +121,8 @@ export class Sim {
   girlPrevX = 0; girlPrevY = 0;
   private freezeTimer = 0; // 히트스톱
   private failTimer = 0;
+  /** 이번 스텝(및 직후 스와이프)에서 격파한 수 — 다중 격파 히트스톱 연장용 */
+  private killsThisStep = 0;
 
   // 도약
   diveActive = false;
@@ -328,7 +330,7 @@ export class Sim {
       e.armorBroken = true;
       this.events.push({ type: 'armorBreak', enemyId: e.id });
     }
-    this.events.push({ type: 'slashHit', enemyId: e.id, killed, x: e.x, y: e.y });
+    this.events.push({ type: 'slashHit', enemyId: e.id, enemyType: e.type, killed, x: e.x, y: e.y });
     if (killed) this.killEnemy(e, false);
   }
 
@@ -349,7 +351,15 @@ export class Sim {
       }
     }
     this.score += Math.round((def.low ? config.scoreLow : config.scoreMid) * mult);
-    this.freezeTimer = Math.max(this.freezeTimer, config.hitstopMs / 1000); // 히트스톱
+
+    // 히트스톱 (r3 항목 7): 기본 40ms. 다중 격파(편대 쓸기)는 상한까지 연장을 허용해
+    // "한 번에 여러 기를 갈랐다"는 무게를 준다. killsThisStep은 매 스텝 초기화되며,
+    // 한 번의 스와이프에서 나온 연쇄 격파는 다음 스텝 전까지 같은 카운터를 공유한다.
+    this.killsThisStep++;
+    const ms = config.hitstopMultiEnabled
+      ? Math.min(config.hitstopMultiMaxMs, config.hitstopMs + (this.killsThisStep - 1) * 8)
+      : config.hitstopMs;
+    this.freezeTimer = Math.max(this.freezeTimer, ms / 1000);
   }
 
   private damagePlayer(dmg: number): void {
@@ -388,6 +398,7 @@ export class Sim {
     for (const e of this.enemyPool) if (e.active) { e.prevX = e.x; e.prevY = e.y; }
     for (const p of this.projectilePool) if (p.active) { p.prevX = p.x; p.prevY = p.y; }
 
+    this.killsThisStep = 0;
     this.time += dt;
     this.field.zoom = this.zoom;
 
@@ -791,7 +802,7 @@ export class Sim {
         if (dd < nd) { nd = dd; nearest = e; }
       }
       if (nearest) {
-        this.events.push({ type: 'slashHit', enemyId: nearest.id, killed: true, x: nearest.x, y: nearest.y });
+        this.events.push({ type: 'slashHit', enemyId: nearest.id, enemyType: nearest.type, killed: true, x: nearest.x, y: nearest.y });
         this.killEnemy(nearest, true);
         this.diveKillCooldown = config.diveKillStaggerSec;
       }

@@ -12,6 +12,7 @@ import { Hud } from './render/hud';
 import { Panel } from './render/panel';
 import { Beeper } from './render/audio';
 import { PerfTracker } from './render/perf';
+import { StatsOverlay } from './render/stats';
 import wavesJson from './data/waves.json';
 
 const params = new URLSearchParams(location.search);
@@ -28,13 +29,21 @@ const renderer = new Renderer2D(canvas);
 const beeper = new Beeper();
 const perf = new PerfTracker();
 const hud = new Hud(stage, () => sim.tryDive());
+const stats = new StatsOverlay(stage, perf, () => ({
+  drawCalls: renderer.drawCalls(),
+  particles: renderer.activeParticles(),
+}));
 const panel = new Panel(
   stage,
   () => sim,
   classifier,
   perf,
   beeper,
-  () => ({ drawCalls: renderer.drawCalls(), overdraw: renderer.overdrawEstimate() }),
+  () => ({
+    drawCalls: renderer.drawCalls(),
+    overdraw: renderer.overdrawEstimate(),
+    particles: renderer.activeParticles(),
+  }),
   () => sim.restart(),
   () => layout(),
 );
@@ -66,6 +75,8 @@ interface SwipeState {
   path: { x: number; y: number }[];
 }
 let touch: SwipeState | null = null;
+/** 마지막 스와이프 진행 방향 (필드 단위 정규화) — 격파 파편의 지향성 분사에 쓴다 */
+let lastSwipeDir = { x: 0, y: 0 };
 
 /** 긴 스와이프는 이 거리(필드 단위)마다 궤적 이펙트를 한 번 더 낸다 */
 const RESTROKE_DIST = 0.35;
@@ -80,6 +91,9 @@ function fireSlash(sx: number, sy: number, ex: number, ey: number): void {
   const a = sim.field.toField(sx, sy);
   const b = sim.field.toField(ex, ey);
   renderer.spawnSlash(a.x, a.y, b.x, b.y, sim.stance);
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len > 1e-5) lastSwipeDir = { x: dx / len, y: dy / len };
   beeper.slash();
 }
 
@@ -166,7 +180,13 @@ function drainEvents(): void {
     switch (e.type) {
       case 'ringEnter': beeper.ringEnter(); break;
       case 'slashHit':
-        if (e.killed) { beeper.kill(); renderer.spawnBurst(e.x, e.y); }
+        if (e.killed) {
+          beeper.kill();
+          hud.killPulse();
+          // 도약 중 자동 격파는 스와이프가 없으므로 순수 방사 분사
+          const d = sim.diveActive ? { x: 0, y: 0 } : lastSwipeDir;
+          renderer.spawnKill(e.x, e.y, e.enemyType, d.x, d.y);
+        }
         break;
       case 'playerHit': beeper.playerHit(); hud.playerHitFlash(); break;
       case 'toggle': beeper.toggle(e.open); break;
@@ -188,10 +208,12 @@ function loop(now: number): void {
   const dtMs = now - last;
   last = now;
   perf.frame(dtMs);
+  renderer.beginFrame(); // 다중 격파 카메라 펀치 합산 래치
   runner.tick(dtMs / 1000);
   drainEvents();
   renderer.render(sim, runner.alpha, Math.min(dtMs / 1000, 0.1));
   hud.update(sim, dtMs / 1000);
+  stats.update(dtMs);
   statTick += dtMs;
   if (statTick > 250) {
     statTick = 0;

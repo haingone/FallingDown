@@ -70,6 +70,7 @@ test('링 체류 시간이 기획서 7장 표와 일치 (0.8s@1.0x / 0.3s@3.0x)'
     const fd = (window as any).__fd;
     const sim = fd.sim;
     const cfg = fd.config;
+    cfg.judgeArea = 'circle'; // 원형(폐기 예정) 경로의 회귀 확인 — 밴드는 judgearea.spec에서 별도 측정
 
     // 속도를 고정해 측정 (가감속 0으로 두고 speed 직접 설정)
     const measureAt = (speed: number) => {
@@ -101,6 +102,7 @@ test('링 체류 시간이 기획서 7장 표와 일치 (0.8s@1.0x / 0.3s@3.0x)'
     const at3 = measureAt(3.0);
     cfg.accelPerSec = 0.25;
     cfg.decelPerSec = 1.0;
+    cfg.judgeArea = 'band';
     const avg = (a: number[]) => a.reduce((s, v) => s + v, 0) / Math.max(1, a.length);
     return { at1, at3, avg1: avg(at1), avg3: avg(at3) };
   });

@@ -330,8 +330,13 @@ test('판정 영역 전환이 패널에서 즉시 반영된다', async ({ page }
   await ready(page, { idle: true });
   await page.locator('#panel-toggle').dispatchEvent('pointerdown');
 
+  // 기본값은 밴드 확정 (기획서 v2.2) — 원형으로 전환했다가 되돌아오는 경로를 확인
+  expect(await page.evaluate(() => (window as any).__fd.config.judgeArea)).toBe('band');
+  const areaSelect = page.locator('.panel-row', { hasText: '판정 영역' }).locator('select');
+  await areaSelect.selectOption('circle');
   expect(await page.evaluate(() => (window as any).__fd.config.judgeArea)).toBe('circle');
-  await page.locator('.panel-row', { hasText: '판정 영역' }).locator('select').selectOption('band');
+  await expect(page.locator('#panel-stats')).toContainText('A 원형');
+  await areaSelect.selectOption('band');
   expect(await page.evaluate(() => (window as any).__fd.config.judgeArea)).toBe('band');
   await expect(page.locator('#panel-stats')).toContainText('B 밴드');
 
