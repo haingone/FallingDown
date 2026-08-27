@@ -26,8 +26,7 @@
       overflow: hidden;
       background: #101622;
     }
-    #game-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-    #trail-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    #game-canvas { position: absolute; left: 0; top: 0; display: block; }
 
     /* ── HUD ── */
     #hud { position: absolute; inset: 0; pointer-events: none; }
@@ -77,13 +76,14 @@
     .panel-row { display: block; margin-bottom: 6px; }
     .panel-row b { color: #ffd24d; margin-left: 4px; }
     .panel-row input[type=range] { width: 100%; }
+    .panel-row input.panel-check { vertical-align: middle; width: 16px; height: 16px; }
+    .panel-row select { background: #223; color: #dde; border: 1px solid #4a5a7a; border-radius: 4px; padding: 2px 4px; }
     .panel-row button { margin-right: 6px; padding: 4px 10px; background: #223; color: #dde; border: 1px solid #4a5a7a; border-radius: 4px; }
   </style>
 </head>
 <body>
   <div id="stage">
     <canvas id="game-canvas"></canvas>
-    <canvas id="trail-canvas"></canvas>
   </div>
   <script type="module" src="/src/main.ts"></script>
 </body>

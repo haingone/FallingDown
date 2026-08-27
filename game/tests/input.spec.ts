@@ -1,20 +1,14 @@
 /**
- * 입력 분류 자가 검증 — 실제 포인터 이벤트 경로 + 합성 제스처 대량 주입 오분류율 실측.
+ * 입력 분류 자가 검증 (M1 이월 — 기획서 v2 5장 ✅ 검증 완료 항목의 회귀 방지).
+ * 실제 포인터 이벤트 경로 + 합성 제스처 대량 주입 오분류율 실측.
  */
-import { test, expect, Page } from '@playwright/test';
-
-async function ready(page: Page): Promise<void> {
-  await page.goto('/');
-  await page.waitForFunction(() => (window as any).__fd !== undefined);
-  // 첫 렌더/셰이더 컴파일로 메인 스레드가 바쁘면 이벤트 지연으로 탭 시간이 왜곡됨 — 안정화 대기
-  await page.waitForTimeout(800);
-}
+import { test, expect } from '@playwright/test';
+import { ready } from './helpers';
 
 test('실제 포인터: 짧은 탭 → 우산 토글', async ({ page }) => {
-  await ready(page);
+  await ready(page, { idle: true });
   const before = await page.evaluate(() => (window as any).__fd.sim.umbrellaOpen);
-  const cx = 195, cy = 500;
-  await page.mouse.move(cx, cy);
+  await page.mouse.move(195, 620);
   await page.mouse.down();
   await page.waitForTimeout(60);
   await page.mouse.up();
@@ -29,7 +23,7 @@ test('실제 포인터: 짧은 탭 → 우산 토글', async ({ page }) => {
 });
 
 test('실제 포인터: 긴 드래그 → 스와이프 분류', async ({ page }) => {
-  await ready(page);
+  await ready(page, { idle: true });
   await page.mouse.move(80, 500);
   await page.mouse.down();
   for (let i = 1; i <= 10; i++) {
@@ -47,8 +41,8 @@ test('실제 포인터: 긴 드래그 → 스와이프 분류', async ({ page })
 });
 
 test('실제 포인터: 미세 이동 장시간 홀드 → 무효(none) 분류', async ({ page }) => {
-  await ready(page);
-  await page.mouse.move(195, 500);
+  await ready(page, { idle: true });
+  await page.mouse.move(195, 620);
   await page.mouse.down();
   await page.waitForTimeout(320);
   await page.mouse.up();
@@ -61,18 +55,17 @@ test('실제 포인터: 미세 이동 장시간 홀드 → 무효(none) 분류',
 });
 
 test('합성 제스처 400건 오분류율 실측 (목표 3% 이하)', async ({ page }, testInfo) => {
-  await ready(page);
+  await ready(page, { stable: false });
   const result = await page.evaluate(() => {
     const fd = (window as any).__fd;
     const c = fd.makeClassifier();
-    // 시드 고정 RNG (재현성)
     let s = 12345;
     const rnd = () => {
       s = (s * 1664525 + 1013904223) >>> 0;
       return s / 4294967296;
     };
 
-    // 인간형 탭 모델: 접촉 40~180ms, 미세 떨림 0~12pt 드리프트, 이벤트 주기 ~16ms
+    // 인간형 탭: 접촉 40~180ms, 미세 떨림 0~12pt 드리프트, 이벤트 주기 ~16ms
     const makeTap = () => {
       const dur = 40 + rnd() * 140;
       const drift = rnd() * 12;
@@ -89,7 +82,7 @@ test('합성 제스처 400건 오분류율 실측 (목표 3% 이하)', async ({ 
       }
       return pts;
     };
-    // 인간형 스와이프 모델: 길이 40~240pt, 시간 70~280ms, 완만한 곡률
+    // 인간형 스와이프: 길이 40~240pt, 시간 70~280ms, 완만한 곡률
     const makeSwipe = () => {
       const len = 40 + rnd() * 200;
       const dur = 70 + rnd() * 210;
@@ -134,6 +127,6 @@ test('합성 제스처 400건 오분류율 실측 (목표 3% 이하)', async ({ 
     body: JSON.stringify({ ...result, total, errors, ratePct: rate }, null, 2),
     contentType: 'application/json',
   });
-  console.log(`[M1] 오분류율: ${rate.toFixed(2)}% (${errors}/${total})`, JSON.stringify(result));
+  console.log(`[P1] 오분류율: ${rate.toFixed(2)}% (${errors}/${total})`, JSON.stringify(result));
   expect(rate).toBeLessThanOrEqual(3);
 });
