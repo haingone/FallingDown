@@ -4,12 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <title>FallingDown — M1 graybox</title>
+  <title>FallingDown — P1 HD-2D prototype</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
       width: 100%; height: 100%;
-      background: #05070d;
+      background: #0a1a24;
       overflow: hidden;
       touch-action: none;
       overscroll-behavior: none;
@@ -24,7 +24,7 @@
       left: 50%; top: 50%;
       transform: translate(-50%, -50%);
       overflow: hidden;
-      background: #101622;
+      background: #1b4f6d;
     }
     #game-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
     #trail-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -37,7 +37,7 @@
     .hp.off { background: #333a4a; }
     #hud-right { position: absolute; top: max(8px, env(safe-area-inset-top)); right: 10px; font-size: 26px; font-weight: 800; text-shadow: 0 0 8px #000; }
     #hud-combo { font-size: 16px; color: #ffd24d; }
-    #hud-wave { position: absolute; top: max(8px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); font-size: 12px; opacity: 0.65; }
+    #hud-wave { position: absolute; top: calc(max(8px, env(safe-area-inset-top)) + 26px); left: 50%; transform: translateX(-50%); font-size: 12px; opacity: 0.65; }
     #hud-gauge {
       position: absolute; bottom: max(14px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
       width: 46%; height: 44px; border: 2px solid #4a5a7a; border-radius: 22px;
@@ -77,6 +77,8 @@
     .panel-row { display: block; margin-bottom: 6px; }
     .panel-row b { color: #ffd24d; margin-left: 4px; }
     .panel-row input[type=range] { width: 100%; }
+    .panel-row input[type=checkbox] { margin-right: 6px; vertical-align: middle; width: 16px; height: 16px; }
+    .panel-group { color: #7fd0ff; font-size: 10px; margin: 8px 0 4px; opacity: 0.9; }
     .panel-row button { margin-right: 6px; padding: 4px 10px; background: #223; color: #dde; border: 1px solid #4a5a7a; border-radius: 4px; }
   </style>
 </head>

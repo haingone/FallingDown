@@ -2,27 +2,44 @@
  * 입력 분류 자가 검증 — 실제 포인터 이벤트 경로 + 합성 제스처 대량 주입 오분류율 실측.
  */
 import { test, expect, Page } from '@playwright/test';
+import { ready as readyBase } from './helpers';
 
+/**
+ * 입력 테스트는 실시간 이벤트 타이밍에 민감하다 (M1 검수: 최초 병렬 실행 플레이크).
+ * 공통 대기(load → __fd → 첫 렌더 완료 → rAF 진행)에 더해, 프레임 시간이 안정될 때까지
+ * (연속 프레임 간격이 과도하지 않을 때까지) 기다린 뒤 포인터를 넣는다.
+ */
 async function ready(page: Page): Promise<void> {
-  await page.goto('/');
-  await page.waitForFunction(() => (window as any).__fd !== undefined);
-  // 첫 렌더/셰이더 컴파일로 메인 스레드가 바쁘면 이벤트 지연으로 탭 시간이 왜곡됨 — 안정화 대기
-  await page.waitForTimeout(800);
+  await readyBase(page);
+  await page.waitForFunction(() => {
+    const fd = window.__fd;
+    return fd.perf.fps() > 0 && fd.frames > 12;
+  }, null, { timeout: 30_000 });
 }
 
 test('실제 포인터: 짧은 탭 → 우산 토글', async ({ page }) => {
   await ready(page);
-  const before = await page.evaluate(() => (window as any).__fd.sim.umbrellaOpen);
   const cx = 195, cy = 500;
-  await page.mouse.move(cx, cy);
-  await page.mouse.down();
-  await page.waitForTimeout(60);
-  await page.mouse.up();
-  await page.waitForTimeout(50);
-  const rec = await page.evaluate(() => {
-    const c = (window as any).__fd.classifier;
-    return c.records[c.records.length - 1];
-  });
+  // 탭 판정은 접촉 시간(200ms) 기준이라 이벤트 디스패치가 지연되면(메인 스레드 스톨)
+  // 의도한 60ms 탭이 200ms를 넘어 'none'으로 기록될 수 있다 — M1 검수가 지적한 플레이크.
+  // 분류기 자체를 검증하는 테스트이므로, 환경 스톨로 접촉 시간이 왜곡된 시도는 재시도한다.
+  let rec: any = null;
+  let before = false;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    before = await page.evaluate(() => (window as any).__fd.sim.umbrellaOpen);
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.waitForTimeout(50);
+    await page.mouse.up();
+    await page.waitForTimeout(60);
+    rec = await page.evaluate(() => {
+      const c = (window as any).__fd.classifier;
+      return c.records[c.records.length - 1];
+    });
+    // 실제 접촉 시간이 임계 안에 들어온 시도만 유효 (그 시도는 반드시 tap이어야 한다)
+    if (rec && rec.durationMs < 200) break;
+  }
+  expect(rec.durationMs).toBeLessThan(200);   // 4회 중 1회도 임계 내로 못 들어오면 환경 문제
   expect(rec.kind).toBe('tap');
   const after = await page.evaluate(() => (window as any).__fd.sim.umbrellaOpen);
   expect(after).toBe(!before);
@@ -50,7 +67,7 @@ test('실제 포인터: 미세 이동 장시간 홀드 → 무효(none) 분류',
   await ready(page);
   await page.mouse.move(195, 500);
   await page.mouse.down();
-  await page.waitForTimeout(320);
+  await page.waitForTimeout(420); // 임계(200ms) 대비 여유 — 스톨과 무관하게 항상 초과
   await page.mouse.up();
   await page.waitForTimeout(50);
   const rec = await page.evaluate(() => {

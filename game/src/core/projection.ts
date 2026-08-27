@@ -1,12 +1,17 @@
 /**
- * 순수 TS 핀홀 투영 — 렌더러(three.js PerspectiveCamera)와 동일한 카메라 모델.
- * 스와이프 히트 판정(화면 공간 선분-원 교차)이 로직 모듈 안에서 완결되도록 하기 위한 장치.
+ * 2D 평면 투영 (P1 HD-2D 전환) — M1의 원근 핀홀 투영을 대체한다.
+ *
+ * 기획서 v2 4장: 카메라는 고정 프레임. 소녀는 화면 세로 40~45%·가로 중앙에 떠 있고,
+ * 게임플레이(판정)는 전부 하나의 2D 평면 위에서 일어난다. 3D 오브젝트 레이어는 연출 전용이라
+ * 판정에 관여하지 않는다 → 투영은 "월드 wu ↔ 화면 px"의 선형 변환으로 닫힌다.
  *
  * 좌표계:
- *  - 월드: 소녀 = 원점 근방. -Y = 낙하 방향(적이 오는 쪽), 카메라 = (0, camHeight, 0)에서 -Y를 내려다봄.
- *  - 적은 y가 음수(원경)에서 +y로 접근, 소녀의 판정 평면 y=0을 지나 카메라 뒤로 프레임 아웃.
- *  - 화면: CSS px, 원점 = 스테이지 좌상단, +x 우측, +y 아래.
- *  - 월드 x → 화면 x, 월드 z → 화면 y (축 정렬 카메라라 투영이 단순 나눗셈으로 닫힘).
+ *  - 월드: 소녀의 정위치(홈) = 원점. +x = 화면 오른쪽, **+y = 화면 위쪽**.
+ *    적은 화면 아래(y 음수)에서 스폰해 +y로 상승, 링을 스치고 화면 위로 프레임 아웃한다.
+ *  - 화면: CSS px, 원점 = 스테이지 좌상단, +x 우측, +y 아래 (y축 부호가 월드와 반대).
+ *  - 카메라는 고정(월드 원점 기준). 도약 중 소녀만 화면 안을 이동한다.
+ *  - 줌아웃(zoomOut)은 렌더러와 판정이 동일 값을 써야 한다 (기획서 4장 미세 줌 1.0→1.06).
+ *    셰이크는 판정에 영향을 주지 않도록 배경·전경 레이어에만 적용한다 (리포트 편차 기록).
  */
 
 export interface Viewport {
@@ -19,33 +24,47 @@ export interface ScreenPoint {
   y: number;
 }
 
-export class Projector {
-  viewport: Viewport = { width: 360, height: 640 };
-  fovDeg = 60;
-  camHeight = 6;
+export class Plane2D {
+  viewport: Viewport = { width: 390, height: 844 };
+  /** 화면 세로에 담기는 월드 높이 (wu) — 이 값이 wu↔px 스케일을 결정 */
+  worldHeightWu = 10;
+  /** 소녀의 화면 세로 위치 비율 (기획서 4장: 0.40~0.45) */
+  girlScreenYPct = 0.42;
+  /** 카메라 줌아웃 배수 (1.0 = 기준, 1.06 = 최고속). 클수록 더 넓게 보임 */
+  zoomOut = 1;
 
-  /** 수직 FOV 기준 초점 거리 (px) */
-  focal(): number {
-    return (this.viewport.height / 2) / Math.tan((this.fovDeg * Math.PI) / 360);
+  /** wu → px 스케일 */
+  pxPerWu(): number {
+    return this.viewport.height / (this.worldHeightWu * this.zoomOut);
   }
 
-  /** 월드 (x, y, z) → 화면 CSS px. 카메라 뒤(depth<=0)는 null. */
-  project(wx: number, wy: number, wz: number): ScreenPoint | null {
-    const depth = this.camHeight - wy;
-    if (depth <= 0.05) return null;
-    const f = this.focal();
-    return {
-      x: this.viewport.width / 2 + (wx * f) / depth,
-      y: this.viewport.height / 2 + (wz * f) / depth,
-    };
+  /** 월드 원점(소녀 홈)의 화면 좌표 */
+  originX(): number { return this.viewport.width / 2; }
+  originY(): number { return this.viewport.height * this.girlScreenYPct; }
+
+  /** 월드 (x, y) → 화면 CSS px */
+  toScreen(wx: number, wy: number): ScreenPoint {
+    const s = this.pxPerWu();
+    return { x: this.originX() + wx * s, y: this.originY() - wy * s };
   }
 
-  /** 월드 반경 → 해당 깊이에서의 화면 반경(px) */
-  projectRadius(worldRadius: number, wy: number): number {
-    const depth = this.camHeight - wy;
-    if (depth <= 0.05) return 0;
-    return (worldRadius * this.focal()) / depth;
+  /** 화면 CSS px → 월드 (x, y) */
+  toWorld(sx: number, sy: number): { x: number; y: number } {
+    const s = this.pxPerWu();
+    return { x: (sx - this.originX()) / s, y: (this.originY() - sy) / s };
   }
+
+  /** 월드 반경 → 화면 반경 px */
+  radiusToPx(worldRadius: number): number {
+    return worldRadius * this.pxPerWu();
+  }
+
+  /** 화면 가로 절반의 월드 폭 (wu) */
+  halfWidthWu(): number { return this.viewport.width / 2 / this.pxPerWu(); }
+  /** 소녀 홈에서 화면 하단까지의 월드 거리 (wu) */
+  belowWu(): number { return (this.viewport.height - this.originY()) / this.pxPerWu(); }
+  /** 소녀 홈에서 화면 상단까지의 월드 거리 (wu) */
+  aboveWu(): number { return this.originY() / this.pxPerWu(); }
 }
 
 /** 선분 (a→b) 과 원(center c, 반경 r)의 교차 여부 — 스와이프 궤적 히트 판정 */
