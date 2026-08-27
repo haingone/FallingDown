@@ -1,62 +1,77 @@
 /**
- * FallingDown M1 시뮬레이션 — 순수 TS, three.js/DOM 미의존 (로직-렌더링 분리, 검수 대상).
- * 고정 타임스텝으로 구동되며(runner.ts), 렌더러는 이 상태를 구독해 그리기만 한다.
+ * FallingDown P1 시뮬레이션 (HD-2D 다운 스크롤) — 순수 TS, three.js/DOM 미의존.
+ * M1의 코어 규칙(속도 다이얼·게이지·도약·생애주기·HP·콤보·웨이브)을 그대로 이월하고,
+ * 좌표·동선·판정만 2D 평면으로 교체했다 (기획서 v2 4장·10.0장).
  *
- * 좌표계는 projection.ts 참조. 소녀 기준 상대 좌표로 투영하므로 카메라는 항상 소녀를 따라간다.
+ * 좌표계는 core/field.ts 참조 (1.0 = 화면 폭, y+ = 위).
+ * 적은 화면 하단(정하방/사선)에서 진입 → 상승 → 판정 링 통과 → 상단 프레임 아웃.
  */
-import { config, dwellTime, attackPeriod, fovForSpeed } from './balance';
-import { Projector, segmentIntersectsCircle } from './projection';
+import { config, dwellTime, attackPeriod, zoomForSpeed } from './balance';
+import { Field, segmentIntersectsCircle } from './field';
+import { activeJudgeArea } from './judgeArea';
 import { Rng } from './rng';
 
 export type EnemyType = 'a-1' | 'a-2' | 'a-3' | 'a-4' | 'a-5';
 export type Lifecycle = 'pass' | 'stay';
-export type Stance = 'umbrella' | 'sword'; // 접음=우산, 펼침=검 (기획서 5장)
+export type Stance = 'umbrella' | 'sword'; // 접음=우산, 펼침=검 (기획서 v2 5장)
+export type EnemyPhase = 'approach' | 'ring' | 'passing' | 'orbit';
 
-const ENEMY_DEF: Record<EnemyType, { lifecycle: Lifecycle; hp: number; low: boolean; radius: number }> = {
-  'a-1': { lifecycle: 'pass', hp: 1, low: true, radius: 0.32 },
-  'a-2': { lifecycle: 'pass', hp: 1, low: true, radius: 0.32 },
-  'a-3': { lifecycle: 'pass', hp: 1, low: true, radius: 0.28 },
-  'a-4': { lifecycle: 'stay', hp: 2, low: false, radius: 0.38 },
-  'a-5': { lifecycle: 'stay', hp: 1, low: false, radius: 0.38 },
+/** 적 정의 — hitRadius는 스프라이트 원형 히트박스 (필드 단위) */
+const ENEMY_DEF: Record<EnemyType, { lifecycle: Lifecycle; low: boolean; hitRadius: number }> = {
+  'a-1': { lifecycle: 'pass', low: true, hitRadius: 0.055 },
+  'a-2': { lifecycle: 'pass', low: true, hitRadius: 0.055 },
+  'a-3': { lifecycle: 'pass', low: true, hitRadius: 0.046 },
+  'a-4': { lifecycle: 'stay', low: false, hitRadius: 0.066 },
+  'a-5': { lifecycle: 'stay', low: false, hitRadius: 0.066 },
 };
+
+export function enemyHitRadius(type: EnemyType): number {
+  return ENEMY_DEF[type].hitRadius;
+}
+export function enemyLifecycle(type: EnemyType): Lifecycle {
+  return ENEMY_DEF[type].lifecycle;
+}
 
 export interface Enemy {
   id: number;
   active: boolean;
   type: EnemyType;
   lifecycle: Lifecycle;
-  phase: 'approach' | 'ring' | 'orbit' | 'passing';
+  phase: EnemyPhase;
   hp: number;
-  x: number; y: number; z: number;
-  prevX: number; prevY: number; prevZ: number; // 렌더 보간용 이전 스텝 위치
-  startX: number; startZ: number;
-  targetX: number; targetZ: number;
-  spawnY: number;
+  x: number; y: number;
+  prevX: number; prevY: number; // 렌더 보간용
+  dirX: number; dirY: number;   // 진행 방향 (정규화)
+  entryKind: EntryAngle;        // 진입 각도 (판정 영역 A/B 비교 통계용)
   zigzagSeed: number;
-  waveIndex: number;
+  zigzagOffset: number;         // 현재 적용된 지그재그 가로 오프셋
+  // 통과형 링 판정
+  ringPathLen: number;          // 진입 시 산출한 링 내 잔여 경로
+  ringTraveled: number;
   // 체류형
+  orbitSlot: number;
   orbitAngle: number;
-  orbitDir: number;
-  attackProgress: number; // 0..1, 주기 정규화 (주기가 속도에 따라 변해도 연속)
+  attackProgress: number;       // 0..1 (주기 정규화 — 속도 변화에도 연속)
   telegraphing: boolean;
-  exposeTimer: number;    // a-5: >0 이면 링 안 노출(피격 가능)
-  armorBroken: boolean;   // a-4: 1타 후 장갑 파괴
-  // 판정
+  exposeTimer: number;          // a-5: >0 이면 링 안 노출(피격 가능)
+  armorBroken: boolean;         // a-4: 1타 후 장갑 파괴
+  spawnAnimT: number;           // 진입 연출 보간 (렌더 전용)
   lastCountedHitMs: number;
 }
 
 export interface Projectile {
   id: number;
   active: boolean;
-  x: number; y: number; z: number;
-  vx: number; vz: number;
+  x: number; y: number;
+  prevX: number; prevY: number;
+  vx: number; vy: number;
 }
 
 export type SimEvent =
   | { type: 'ringEnter'; enemyId: number }
-  | { type: 'slashHit'; enemyId: number; killed: boolean; x: number; y: number; z: number }
+  | { type: 'slashHit'; enemyId: number; enemyType: EnemyType; killed: boolean; x: number; y: number }
   | { type: 'armorBreak'; enemyId: number }
-  | { type: 'projectileDown'; x: number; z: number }
+  | { type: 'projectileDown'; x: number; y: number }
   | { type: 'playerHit'; hp: number }
   | { type: 'enemyPassed'; enemyId: number }
   | { type: 'attackTelegraph'; enemyId: number }
@@ -66,21 +81,23 @@ export type SimEvent =
   | { type: 'toggle'; open: boolean }
   | { type: 'clear' } | { type: 'fail' };
 
-export interface WaveEntry { t: number; type: EnemyType; formationCount?: number }
+/** entry: 통과형 진입 각도 (기획서 v2 10.0 "정하방/사선 좌우") */
+export type EntryAngle = 'down' | 'left' | 'right';
+export interface WaveEntry { t: number; type: EnemyType; formationCount?: number; entry?: EntryAngle }
 export interface Wave { name: string; restAfterSec: number; entries: WaveEntry[] }
 export interface WavePlan { waves: Wave[] }
 
 export type GameState = 'playing' | 'rest' | 'clear' | 'fail';
 
-const FORMATION_SPACING = 0.62; // a-3 편대 간격 (wu) — 긴 스와이프 1회로 관통 가능해야 함
-const ORBIT_SPEED = 0.8;        // 체류형 선회 각속도 (rad/s)
-const A4_ORBIT_R = 0.8;         // a-4 선회 반경 (×링 반경)
-const A5_EDGE_R = 1.15;         // a-5 대기 위치 (링 가장자리 바깥 — 노출 시에만 피격 가능)
-const A5_EXPOSE_R = 0.8;
-const FAIL_RESTART_DELAY = 1.2; // 실패 연출 후 재시작 (기획서 "즉시 재시작" — 가독성용 지연, 리포트 기록)
+const DIAGONAL_DEG = 32;        // 사선 진입 각도
+const TARGET_SPREAD = 0.45;     // 통과 목표점 산포 (×링 반경)
+const ZIGZAG_AMPLITUDE = 0.16;  // a-2 지그재그 진폭 (필드 단위)
+const ZIGZAG_FREQ = 4.4;        // a-2 지그재그 주파수
+const FAIL_RESTART_DELAY = 1.2; // 실패 연출 후 재시작 (M1 검수 승인 편차)
+const DIVE_RETURN_SEC = 0.4;
 
 export class Sim {
-  readonly projector = new Projector();
+  readonly field = new Field();
   readonly events: SimEvent[] = [];
   private rng: Rng;
   private plan: WavePlan;
@@ -96,26 +113,30 @@ export class Sim {
   toggleLockTimer = 0;
   gauge = 0;
   gaugeFullAt: number | null = null;
+  diveCount = 0;        // 판당 도약 횟수 (게이지 A/B 실측 지표)
   combo = 0;
   private comboHoldAccum = 0;
   score = 0;
-  girlX = 0; girlY = 0; girlZ = 0;
-  girlPrevX = 0; girlPrevY = 0; girlPrevZ = 0;
+  girlX = 0; girlY = 0;
+  girlPrevX = 0; girlPrevY = 0;
   private freezeTimer = 0; // 히트스톱
   private failTimer = 0;
+  /** 이번 스텝(및 직후 스와이프)에서 격파한 수 — 다중 격파 히트스톱 연장용 */
+  private killsThisStep = 0;
 
   // 도약
   diveActive = false;
   private diveTimer = 0;
   private diveKillCooldown = 0;
-  private diveTargetX = 0; private diveTargetY = 0; private diveTargetZ = 0;
+  private diveTargetX = 0; private diveTargetY = 0;
   private returnTimer = 0;
 
   // 적
   private enemyPool: Enemy[] = [];
   private projectilePool: Projectile[] = [];
   private nextId = 1;
-  private pendingStay: { type: EnemyType; waveIndex: number }[] = [];
+  private pendingStay: { type: EnemyType }[] = [];
+  private orbitBaseAngle = 0;
 
   // 웨이브
   waveIndex = -1;
@@ -126,30 +147,45 @@ export class Sim {
   // 통계
   kills = 0;
   passedCount = 0;
+  /** 판정 영역에 한 번도 들어오지 못하고 프레임 아웃한 통과형 (영역 A/B 비교 지표) */
+  missedAreaCount = 0;
   hitsTaken = 0;
+  /** 통과형 진입 각도별 집계 — 판정 영역 A/B 비교용 */
+  statsByEntry: Record<EntryAngle, { spawned: number; killed: number; passed: number; missed: number }> = {
+    down: { spawned: 0, killed: 0, passed: 0, missed: 0 },
+    left: { spawned: 0, killed: 0, passed: 0, missed: 0 },
+    right: { spawned: 0, killed: 0, passed: 0, missed: 0 },
+  };
   multIntegral = 0;
   private multTimeAccum = 0;
-  swipeHitFlags: boolean[] = [];
   restartCount = 0;
+  /** 현재 스와이프 중 링 안에 벨 대상이 있었는가 (M1 검수 질문 3: 헛스윙 판정 한정) */
+  private swipeHadTargets = false;
 
   constructor(plan: WavePlan, seed = 20260821) {
     this.plan = plan;
     this.seed = seed;
     this.rng = new Rng(seed);
     for (let i = 0; i < 64; i++) this.enemyPool.push(this.makeEnemy());
-    for (let i = 0; i < 16; i++) this.projectilePool.push({ id: 0, active: false, x: 0, y: 0, z: 0, vx: 0, vz: 0 });
+    for (let i = 0; i < 16; i++) {
+      this.projectilePool.push({ id: 0, active: false, x: 0, y: 0, prevX: 0, prevY: 0, vx: 0, vy: 0 });
+    }
+    this.girlY = this.girlHomeY();
+    this.girlPrevY = this.girlY;
     this.startWave(0);
   }
 
   private makeEnemy(): Enemy {
     return {
       id: 0, active: false, type: 'a-1', lifecycle: 'pass', phase: 'approach', hp: 1,
-      x: 0, y: 0, z: 0, prevX: 0, prevY: 0, prevZ: 0,
-      startX: 0, startZ: 0, targetX: 0, targetZ: 0, spawnY: 0,
-      zigzagSeed: 0, waveIndex: 0, orbitAngle: 0, orbitDir: 1, attackProgress: 0,
-      telegraphing: false, exposeTimer: 0, armorBroken: false, lastCountedHitMs: -1e9,
+      x: 0, y: 0, prevX: 0, prevY: 0, dirX: 0, dirY: 1, entryKind: 'down',
+      zigzagSeed: 0, zigzagOffset: 0, ringPathLen: 0, ringTraveled: 0,
+      orbitSlot: 0, orbitAngle: 0, attackProgress: 0, telegraphing: false,
+      exposeTimer: 0, armorBroken: false, spawnAnimT: 0, lastCountedHitMs: -1e9,
     };
   }
+
+  // ─────────────────────────── 파생 상태 ───────────────────────────
 
   get enemies(): readonly Enemy[] { return this.enemyPool; }
   get projectiles(): readonly Projectile[] { return this.projectilePool; }
@@ -158,35 +194,49 @@ export class Sim {
   }
   get avgMultiplier(): number { return this.multTimeAccum > 0 ? this.multIntegral / this.multTimeAccum : 0; }
   get stance(): Stance { return this.umbrellaOpen ? 'sword' : 'umbrella'; }
-  get fov(): number { return this.diveActive ? config.fovMax : fovForSpeed(this.speed); }
+  get zoom(): number { return this.diveActive ? config.zoomMax : zoomForSpeed(this.speed); }
+  get ringRadius(): number { return config.ringRadiusFrac; }
   get currentWaveName(): string { return this.plan.waves[this.waveIndex]?.name ?? ''; }
   get waveCount(): number { return this.plan.waves.length; }
+  girlHomeY(): number { return this.field.yAtScreenFraction(config.girlScreenFrac); }
   activeEnemyCount(): number { return this.enemyPool.filter(e => e.active).length; }
   activeStayCount(): number {
-    return this.enemyPool.filter(e => e.active && e.lifecycle === 'stay' && e.phase === 'orbit').length;
+    return this.enemyPool.filter(e => e.active && e.lifecycle === 'stay').length;
+  }
+  /** 링 안에서 현재 벨 수 있는 적 수 (혼잡도·헛스윙 판정용) */
+  hittableCount(): number {
+    let n = 0;
+    for (const e of this.enemyPool) if (e.active && this.isHittable(e)) n++;
+    return n;
   }
 
-  /** 전판 재시작 (실패 시 자동 호출, 자원 100% 소실 = 게이지·점수 리셋) */
   restart(): void {
     this.time = 0; this.state = 'playing';
     this.speed = config.speedMin; this.umbrellaOpen = false;
     this.hp = config.maxHp; this.invulnTimer = 0; this.toggleLockTimer = 0;
-    this.gauge = 0; this.gaugeFullAt = null;
+    this.gauge = 0; this.gaugeFullAt = null; this.diveCount = 0;
     this.combo = 0; this.comboHoldAccum = 0; this.score = 0;
-    this.girlX = 0; this.girlY = 0; this.girlZ = 0;
+    this.girlX = 0; this.girlY = this.girlHomeY();
+    this.girlPrevX = this.girlX; this.girlPrevY = this.girlY;
     this.freezeTimer = 0; this.failTimer = 0;
     this.diveActive = false; this.diveTimer = 0; this.returnTimer = 0;
     for (const e of this.enemyPool) e.active = false;
     for (const p of this.projectilePool) p.active = false;
     this.pendingStay.length = 0;
-    this.kills = 0; this.passedCount = 0; this.hitsTaken = 0;
+    this.kills = 0; this.passedCount = 0; this.hitsTaken = 0; this.missedAreaCount = 0;
+    this.statsByEntry = {
+      down: { spawned: 0, killed: 0, passed: 0, missed: 0 },
+      left: { spawned: 0, killed: 0, passed: 0, missed: 0 },
+      right: { spawned: 0, killed: 0, passed: 0, missed: 0 },
+    };
     this.multIntegral = 0; this.multTimeAccum = 0;
+    this.swipeHadTargets = false;
     this.rng = new Rng(this.seed + this.restartCount * 7919);
     this.restartCount++;
     this.startWave(0);
   }
 
-  // ─────────────────────────── 입력 API (main.ts의 분류기가 호출) ───────────────────────────
+  // ─────────────────────────── 입력 API ───────────────────────────
 
   /** 탭 = 우산 펼치기/접기 토글 */
   toggleUmbrella(): boolean {
@@ -198,8 +248,8 @@ export class Sim {
   }
 
   /**
-   * 스와이프 궤적 선분 1개 판정 (move 이벤트마다 증분 호출 — 손을 떼기 전에 벤다).
-   * 화면 좌표는 CSS px. 반환값 = 이번 선분의 히트 수.
+   * 스와이프 궤적 선분 1개 판정 (move마다 증분 호출 — 손을 떼기 전에 벤다).
+   * 화면 좌표 선분 vs 링 내 적 스프라이트 원형 히트박스 교차 (기획서 v2 5장).
    */
   applySwipeSegment(ax: number, ay: number, bx: number, by: number, nowMs: number): number {
     if (this.state !== 'playing' && this.state !== 'rest') return 0;
@@ -211,35 +261,40 @@ export class Sim {
 
     for (const e of this.enemyPool) {
       if (!e.active || !this.isHittable(e)) continue;
+      this.swipeHadTargets = true; // 링 내 대상 존재 → 이번 스와이프는 헛스윙 판정 대상
       if (nowMs - e.lastCountedHitMs < rejudge) continue;
-      const p = this.projector.project(e.x - this.girlX, e.y - this.girlY, e.z - this.girlZ);
-      if (!p) continue;
-      const r = this.projector.projectRadius(ENEMY_DEF[e.type].radius, e.y - this.girlY) + width;
+      const p = this.field.toScreen(e.x, e.y);
+      const r = this.field.toScreenLength(ENEMY_DEF[e.type].hitRadius) + width;
       if (segmentIntersectsCircle(ax, ay, bx, by, p.x, p.y, r)) {
         e.lastCountedHitMs = nowMs;
         this.damageEnemy(e);
         hits++;
       }
     }
+    // 투사체 요격 (기획서 v2 10.1 a-5)
     for (const pr of this.projectilePool) {
       if (!pr.active) continue;
-      const p = this.projector.project(pr.x - this.girlX, pr.y - this.girlY, pr.z - this.girlZ);
-      if (!p) continue;
-      const r = this.projector.projectRadius(0.2, pr.y - this.girlY) + width;
+      this.swipeHadTargets = true;
+      const p = this.field.toScreen(pr.x, pr.y);
+      const r = this.field.toScreenLength(0.03) + width;
       if (segmentIntersectsCircle(ax, ay, bx, by, p.x, p.y, r)) {
         pr.active = false;
         this.score += Math.round(config.scoreProjectile * this.multiplier);
-        this.events.push({ type: 'projectileDown', x: pr.x, z: pr.z });
+        this.events.push({ type: 'projectileDown', x: pr.x, y: pr.y });
         hits++;
       }
     }
     return hits;
   }
 
-  /** 스와이프 종료 — 총 히트 0이면 베기 미스 → 콤보 리셋 (기획서 7장) */
+  /**
+   * 스와이프 종료. 콤보 리셋은 **링 내 대상이 있었는데 못 맞힌 경우(헛스윙)** 에만 발생한다
+   * (M1 검수 질문 3 확정 — 빈 화면 스와이프는 무벌점).
+   */
   endSwipe(totalHits: number): void {
-    this.swipeHitFlags.push(totalHits > 0);
-    if (totalHits === 0 && !this.diveActive && this.state === 'playing') this.combo = 0;
+    const whiffed = totalHits === 0 && this.swipeHadTargets;
+    this.swipeHadTargets = false;
+    if (whiffed && !this.diveActive && this.state === 'playing') this.combo = 0;
   }
 
   /** 도약 버튼 — 게이지 100% 시 발동 */
@@ -248,6 +303,7 @@ export class Sim {
     if (this.diveActive || this.gauge < 1) return false;
     this.gauge = 0;
     this.diveActive = true;
+    this.diveCount++;
     this.diveTimer = config.diveDurationSec;
     this.diveKillCooldown = 0;
     this.retargetDive();
@@ -258,12 +314,12 @@ export class Sim {
   private isHittable(e: Enemy): boolean {
     if (e.lifecycle === 'pass') return e.phase === 'ring';
     if (e.phase !== 'orbit') return false;
-    if (e.type === 'a-5') return e.exposeTimer > 0; // 링 가장자리 대기 중엔 판정 밖
+    if (e.type === 'a-5') return e.exposeTimer > 0; // 발사 직후 1초만 링 안 노출
     return true;
   }
 
   private damageEnemy(e: Enemy): void {
-    // 체류형: 공격 예고 중 베면 공격 저지 (기획서 10.0)
+    // 체류형: 공격 예고 중 베면 공격 저지 (기획서 v2 10.0)
     if (e.lifecycle === 'stay' && e.telegraphing) {
       e.attackProgress = 0;
       e.telegraphing = false;
@@ -274,25 +330,36 @@ export class Sim {
       e.armorBroken = true;
       this.events.push({ type: 'armorBreak', enemyId: e.id });
     }
-    this.events.push({ type: 'slashHit', enemyId: e.id, killed, x: e.x, y: e.y, z: e.z });
+    this.events.push({ type: 'slashHit', enemyId: e.id, enemyType: e.type, killed, x: e.x, y: e.y });
     if (killed) this.killEnemy(e, false);
   }
 
   private killEnemy(e: Enemy, inDive: boolean): void {
     e.active = false;
     this.kills++;
+    if (e.lifecycle === 'pass') this.statsByEntry[e.entryKind].killed++;
     const def = ENEMY_DEF[e.type];
     const mult = this.multiplier;
-    // 깃털: 하급만, 도약 중 미지급 (기획서 8장). 배율 곱 적용 (기획서 8장 "5% (배율 곱 적용)")
+    // 깃털: 하급만, 도약 중 미지급 (기획서 v2 8장).
+    // 배율 곱 적용 여부는 A/B 토글 (기획서 v2 7장 미결 / 17장 검증 4). 기본 OFF.
     if (def.low && !inDive) {
-      this.gauge = Math.min(1, this.gauge + config.gaugePerLowKill * mult);
+      const gain = config.gaugePerLowKill * (config.gaugeMultiplierEnabled ? mult : 1);
+      this.gauge = Math.min(1, this.gauge + gain);
       if (this.gauge >= 1 && this.gaugeFullAt === null) {
         this.gaugeFullAt = this.time;
         this.events.push({ type: 'gaugeFull' });
       }
     }
     this.score += Math.round((def.low ? config.scoreLow : config.scoreMid) * mult);
-    this.freezeTimer = Math.max(this.freezeTimer, config.hitstopMs / 1000); // 히트스톱 (기획서 16장 1)
+
+    // 히트스톱 (r3 항목 7): 기본 40ms. 다중 격파(편대 쓸기)는 상한까지 연장을 허용해
+    // "한 번에 여러 기를 갈랐다"는 무게를 준다. killsThisStep은 매 스텝 초기화되며,
+    // 한 번의 스와이프에서 나온 연쇄 격파는 다음 스텝 전까지 같은 카운터를 공유한다.
+    this.killsThisStep++;
+    const ms = config.hitstopMultiEnabled
+      ? Math.min(config.hitstopMultiMaxMs, config.hitstopMs + (this.killsThisStep - 1) * 8)
+      : config.hitstopMs;
+    this.freezeTimer = Math.max(this.freezeTimer, ms / 1000);
   }
 
   private damagePlayer(dmg: number): void {
@@ -321,33 +388,31 @@ export class Sim {
     }
     if (this.state === 'fail') {
       this.failTimer -= dt;
-      if (this.failTimer <= 0) this.restart(); // 즉시 재시작 (기획서 9장)
+      if (this.failTimer <= 0) this.restart();
       return;
     }
     if (this.state === 'clear') return;
 
     // 렌더 보간용 이전 위치 스냅샷
-    this.girlPrevX = this.girlX; this.girlPrevY = this.girlY; this.girlPrevZ = this.girlZ;
-    for (const e of this.enemyPool) {
-      if (e.active) { e.prevX = e.x; e.prevY = e.y; e.prevZ = e.z; }
-    }
+    this.girlPrevX = this.girlX; this.girlPrevY = this.girlY;
+    for (const e of this.enemyPool) if (e.active) { e.prevX = e.x; e.prevY = e.y; }
+    for (const p of this.projectilePool) if (p.active) { p.prevX = p.x; p.prevY = p.y; }
 
+    this.killsThisStep = 0;
     this.time += dt;
-    this.projector.fovDeg = this.fov;
-    this.projector.camHeight = config.camHeightWu;
+    this.field.zoom = this.zoom;
 
-    // 타이머
     if (this.invulnTimer > 0) this.invulnTimer -= dt;
     if (this.toggleLockTimer > 0) this.toggleLockTimer -= dt;
 
-    // 낙하 속도 다이얼 (기획서 7장) — 도약 중에는 속도계 정지
+    // 낙하 속도 다이얼 (기획서 v2 7장) — 도약 중에는 속도계 정지
     if (!this.diveActive) {
       if (this.umbrellaOpen) this.speed -= config.decelPerSec * dt;
       else this.speed += config.accelPerSec * dt;
       this.speed = Math.max(config.speedMin, Math.min(config.speedMax, this.speed));
     }
 
-    // 최고속 콤보: 3.0x 유지 1초당 +1 (리셋은 피격/베기 미스 시 — 기획서 7장 문언 그대로)
+    // 최고속 콤보: 3.0x 유지 1초당 +1 (리셋은 피격/헛스윙 시 — M1 검수 질문 2 확정)
     if (!this.diveActive && this.speed >= config.speedMax - 1e-9) {
       this.comboHoldAccum += dt;
       while (this.comboHoldAccum >= 1) {
@@ -356,19 +421,20 @@ export class Sim {
       }
     }
 
-    // 배율 시간가중 평균 (리포트용)
     this.multIntegral += this.multiplier * dt;
     this.multTimeAccum += dt;
+    this.orbitBaseAngle += (config.orbitSpeedDegSec * Math.PI / 180) * dt;
 
     this.updateWaves(dt);
     this.updateEnemies(dt);
     this.updateProjectiles(dt);
     if (this.diveActive) this.updateDive(dt);
     else if (this.returnTimer > 0) {
-      // 도약 종료 후 원위치 복귀 보간
       this.returnTimer -= dt;
-      const k = Math.max(0, this.returnTimer / 0.4);
-      this.girlX *= k; this.girlY *= k; this.girlZ *= k;
+      const k = Math.max(0, this.returnTimer / DIVE_RETURN_SEC);
+      const homeY = this.girlHomeY();
+      this.girlX *= k;
+      this.girlY = homeY + (this.girlY - homeY) * k;
     }
   }
 
@@ -392,26 +458,22 @@ export class Sim {
     if (!wave) return;
     this.waveTime += dt;
 
-    // 스폰 (spawnDensityScale: 튜닝 패널 — 엔트리 시각 배수)
     while (this.spawnCursor < wave.entries.length &&
-           wave.entries[this.spawnCursor].t * config.spawnDensityScale <= this.waveTime) {
-      const entry = wave.entries[this.spawnCursor++];
-      this.spawnEntry(entry);
+           wave.entries[this.spawnCursor].t <= this.waveTime) {
+      this.spawnEntry(wave.entries[this.spawnCursor++]);
     }
 
-    // 체류형 대기열 방출 (상한 4기 — 기획서 10.0)
+    // 체류형 대기열 방출 (상한 4기 — 기획서 v2 10.0)
     while (this.pendingStay.length > 0 && this.activeStayCount() < config.stayCap) {
-      const p = this.pendingStay.shift()!;
-      this.spawnEnemy(p.type, undefined, p.waveIndex);
+      this.spawnEnemy(this.pendingStay.shift()!.type, undefined, undefined);
     }
 
-    // 웨이브 종료: 전 엔트리 스폰 완료 + 활성 적 0 + 대기열 0
     if (this.spawnCursor >= wave.entries.length && this.activeEnemyCount() === 0 && this.pendingStay.length === 0) {
       if (this.waveIndex >= this.plan.waves.length - 1) {
-        this.state = 'clear'; // 최종 웨이브 격퇴 = 클리어 (M1: 중간 보스 범위 외)
+        this.state = 'clear'; // 최종 웨이브 격퇴 = 클리어 (P1: 중간 보스 범위 외)
         this.events.push({ type: 'clear' });
       } else {
-        this.state = 'rest'; // 휴지기 2~3초 (기획서 11.3)
+        this.state = 'rest'; // 휴지기 2~3초 (기획서 v2 11.3)
         this.restTimer = wave.restAfterSec;
       }
     }
@@ -419,118 +481,220 @@ export class Sim {
 
   private spawnEntry(entry: WaveEntry): void {
     if (entry.type === 'a-3') {
-      // 밀집 편대: 평행 궤적의 가로 열 — 긴 스와이프 1회로 다수 격파 (기획서 10.1)
+      // 밀집 편대: 긴 스와이프 1회로 다수 격파 (기획서 v2 10.1).
+      // 전원이 판정 링을 통과해야 의미가 있으므로 편대 폭을 링 지름의 80% 안으로 클램프한다.
       const n = entry.formationCount ?? this.rng.int(5, 8);
-      const angle = this.rng.range(0, Math.PI);
-      const dirX = Math.cos(angle), dirZ = Math.sin(angle);
+      const dir = this.entryDirection(entry.entry);
+      // 밴드 방식은 가로 전체가 판정 영역이라 클램프가 불필요하다 (전원이 반드시 밴드를 지난다)
+      const maxSpacing = activeJudgeArea().kind === 'band'
+        ? Infinity
+        : (config.ringRadiusFrac * 2 * 0.8) / Math.max(1, n - 1);
+      const spacing = Math.min(config.formationSpacing, maxSpacing);
       for (let i = 0; i < n; i++) {
-        const off = (i - (n - 1) / 2) * FORMATION_SPACING;
-        this.spawnEnemy('a-3', { offX: dirX * off, offZ: dirZ * off }, this.waveIndex);
+        const off = (i - (n - 1) / 2) * spacing;
+        // 진행 방향으로도 살짝 어긋나게 배치해 평면적인 일렬이 아닌 "무리"로 보이게 한다
+        const stagger = (i % 2 === 0 ? 1 : -1) * spacing * 0.55;
+        this.spawnEnemy('a-3', dir, off, stagger);
       }
       return;
     }
-    const def = ENEMY_DEF[entry.type];
-    if (def.lifecycle === 'stay' && this.activeStayCount() >= config.stayCap) {
-      this.pendingStay.push({ type: entry.type, waveIndex: this.waveIndex });
+    if (ENEMY_DEF[entry.type].lifecycle === 'stay' && this.activeStayCount() >= config.stayCap) {
+      this.pendingStay.push({ type: entry.type });
       return;
     }
-    this.spawnEnemy(entry.type, undefined, this.waveIndex);
+    this.spawnEnemy(entry.type, this.entryDirection(entry.entry), undefined);
   }
 
-  private spawnEnemy(type: EnemyType, formationOff: { offX: number; offZ: number } | undefined, waveIndex: number): void {
+  /** 통과형 진입 각도 (기획서 v2 10.0: 정하방 / 사선 좌우) */
+  private entryDirection(entry?: EntryAngle): { x: number; y: number; kind: EntryAngle } {
+    const pick: EntryAngle = entry ?? (['down', 'left', 'right'] as EntryAngle[])[this.rng.int(0, 2)];
+    if (pick === 'down') return { x: 0, y: 1, kind: pick };
+    const rad = (DIAGONAL_DEG * Math.PI) / 180;
+    // 'left' = 좌측 하단에서 진입 → 우상향
+    const sign = pick === 'left' ? 1 : -1;
+    return { x: Math.sin(rad) * sign, y: Math.cos(rad), kind: pick };
+  }
+
+  private spawnEnemy(
+    type: EnemyType,
+    dir: { x: number; y: number; kind: EntryAngle } | undefined,
+    formationOffset: number | undefined,
+    formationStagger = 0,
+  ): void {
     const e = this.enemyPool.find(en => !en.active) ?? this.enemyPool[this.enemyPool.length - 1];
     const def = ENEMY_DEF[type];
     e.id = this.nextId++;
     e.active = true;
     e.type = type;
     e.lifecycle = def.lifecycle;
-    e.phase = 'approach';
-    e.hp = def.hp;
-    e.spawnY = -config.spawnDistWu;
-    e.y = e.spawnY;
-    // 시작점: 소실점 부근 넓게, 목표점: 소녀 근방 (링 안을 스치도록)
-    const spreadStart = 6, spreadTarget = config.ringRadiusWu * 0.55;
-    e.startX = this.rng.range(-spreadStart, spreadStart);
-    e.startZ = this.rng.range(-spreadStart, spreadStart);
-    e.targetX = this.rng.range(-spreadTarget, spreadTarget);
-    e.targetZ = this.rng.range(-spreadTarget, spreadTarget);
-    if (formationOff) {
-      e.startX = e.targetX + formationOff.offX;
-      e.startZ = e.targetZ + formationOff.offZ;
-      e.targetX += formationOff.offX;
-      e.targetZ += formationOff.offZ;
-    }
-    e.x = e.startX; e.z = e.startZ;
-    e.prevX = e.x; e.prevY = e.y; e.prevZ = e.z;
+    e.hp = type === 'a-4' ? config.a4Hp : type === 'a-5' ? config.a5Hp : 1;
     e.zigzagSeed = this.rng.range(0, Math.PI * 2);
-    e.waveIndex = waveIndex;
-    e.orbitAngle = this.rng.range(0, Math.PI * 2);
-    e.orbitDir = this.rng.next() < 0.5 ? 1 : -1;
+    e.zigzagOffset = 0;
+    e.ringPathLen = 0;
+    e.ringTraveled = 0;
     e.attackProgress = 0;
     e.telegraphing = false;
     e.exposeTimer = 0;
     e.armorBroken = false;
+    e.spawnAnimT = 0;
     e.lastCountedHitMs = -1e9;
+
+    if (def.lifecycle === 'stay') {
+      // 체류형: 하단에서 진입해 배정된 선회 슬롯으로 이동
+      e.phase = 'approach';
+      e.orbitSlot = this.freeOrbitSlot();
+      e.orbitAngle = this.slotAngle(e.orbitSlot);
+      const target = this.orbitPosition(e);
+      e.dirX = 0; e.dirY = 1;
+      e.x = target.x;
+      e.y = this.field.bottomY - config.spawnMargin;
+      e.prevX = e.x; e.prevY = e.y;
+      return;
+    }
+
+    // 통과형: 판정 영역을 스치도록 목표점을 잡고, 진입 방향의 반대편으로 역산해 스폰
+    const d = dir ?? this.entryDirection();
+    e.dirX = d.x; e.dirY = d.y;
+    e.entryKind = d.kind;
+    e.phase = 'approach';
+    this.statsByEntry[d.kind].spawned++;
+    const R = config.ringRadiusFrac;
+    // 편대는 링 중심을 겨냥 (전원이 판정 창을 지나야 하므로 산포 없음)
+    const spread = formationOffset !== undefined ? 0 : R * TARGET_SPREAD;
+    let tx = this.girlX + (spread > 0 ? this.rng.range(-spread, spread) : 0);
+    let ty = this.girlY + (spread > 0 ? this.rng.range(-spread, spread) : 0);
+    if (formationOffset !== undefined) {
+      // 편대는 진행 방향에 **수직**으로 배열 (목표점 자체를 옮긴다)
+      tx += -d.y * formationOffset;
+      ty += d.x * formationOffset;
+    }
+    // 목표점에서 진입 방향 반대로 화면 밖까지 물러난 지점이 스폰 위치.
+    // 진행축 어긋남(stagger)은 목표점이 아니라 **스폰 위치에만** 더한다 —
+    // 목표점에 더하면 back 계산의 |ty| 항과 정확히 상쇄돼 무효가 된다 (평평한 일렬이 됨).
+    const back = (this.field.aspect / 2 + config.spawnMargin + Math.abs(ty)) / Math.max(0.2, d.y);
+    e.x = tx - d.x * (back - formationStagger);
+    e.y = ty - d.y * (back - formationStagger);
+    e.prevX = e.x; e.prevY = e.y;
+  }
+
+  private freeOrbitSlot(): number {
+    const used = new Set<number>();
+    for (const e of this.enemyPool) if (e.active && e.lifecycle === 'stay') used.add(e.orbitSlot);
+    for (let i = 0; i < config.stayCap; i++) if (!used.has(i)) return i;
+    return 0;
+  }
+
+  /** 슬롯별 배치각 — orbitSpreadDeg 범위에 균등 분산 (혼잡도 검증 손잡이) */
+  private slotAngle(slot: number): number {
+    const spread = (config.orbitSpreadDeg * Math.PI) / 180;
+    const step = spread / config.stayCap;
+    return -Math.PI / 2 + (slot - (config.stayCap - 1) / 2) * step;
+  }
+
+  private orbitPosition(e: Enemy): { x: number; y: number } {
+    const base = config.ringRadiusFrac * config.orbitRadiusFactor;
+    let r = base;
+    if (e.type === 'a-5') {
+      r = config.ringRadiusFrac * (e.exposeTimer > 0 ? config.a5ExposeFactor : config.a5EdgeFactor);
+    }
+    const ang = this.slotAngle(e.orbitSlot) + this.orbitBaseAngle;
+    return { x: this.girlX + Math.cos(ang) * r, y: this.girlY + Math.sin(ang) * r };
   }
 
   // ─────────────────────────── 적 갱신 ───────────────────────────
 
   private updateEnemies(dt: number): void {
-    const halfWin = config.ringWindowWu / 2;
+    const area = activeJudgeArea();
     for (const e of this.enemyPool) {
       if (!e.active) continue;
+      if (e.spawnAnimT < 1) e.spawnAnimT = Math.min(1, e.spawnAnimT + dt * 4);
 
+      if (e.lifecycle === 'stay') {
+        this.updateStayEnemy(e, dt);
+        continue;
+      }
+
+      // 접근 속도 ∝ 낙하 속도 (기획서 v2 7장)
       if (e.phase === 'approach') {
-        // 접근 속도 ∝ 낙하 속도 (기획서 7장)
-        const vy = config.approachBaseWu * this.speed;
-        e.y += vy * dt;
-        const ringEntryY = e.lifecycle === 'pass' ? -halfWin : 0;
-        const p = Math.min(1, (e.y - e.spawnY) / (ringEntryY - e.spawnY));
-        e.x = e.startX + (e.targetX - e.startX) * p;
-        e.z = e.startZ + (e.targetZ - e.startZ) * p;
-        if (e.type === 'a-2') {
-          // 지그재그: 진행에 따라 감쇠하는 가로 사인 진동
-          e.x += Math.sin(this.time * 5 + e.zigzagSeed) * 1.6 * (1 - p);
+        const v = config.approachSpeed * this.speed;
+        e.x += e.dirX * v * dt;
+        e.y += e.dirY * v * dt;
+        this.applyZigzag(e);
+        // 판정 영역을 스치지 못하고 지나쳐 버린 개체 회수 (편대 바깥쪽 등) — 웨이브 교착 방지.
+        // 밴드 방식에서는 상방 이동하는 통과형이 반드시 밴드를 지나므로 구조적으로 발생하지 않는다.
+        if (e.y > this.field.topY + config.spawnMargin) {
+          e.active = false;
+          this.missedAreaCount++;
+          this.statsByEntry[e.entryKind].missed++;
+          continue;
         }
-        if (e.y >= ringEntryY) {
-          if (e.lifecycle === 'pass') {
-            e.phase = 'ring';
-            this.events.push({ type: 'ringEnter', enemyId: e.id });
-          } else {
-            e.phase = 'orbit';
-            e.attackProgress = 0;
-            this.events.push({ type: 'ringEnter', enemyId: e.id });
-          }
+        // 판정 영역 진입
+        if (area.contains(e.x, e.y, this.girlX, this.girlY)) {
+          e.phase = 'ring';
+          e.ringTraveled = 0;
+          e.ringPathLen = Math.max(
+            1e-4,
+            area.distanceToExit(e.x, e.y, e.dirX, e.dirY, this.girlX, this.girlY),
+          );
+          this.events.push({ type: 'ringEnter', enemyId: e.id });
         }
       } else if (e.phase === 'ring') {
-        // 판정 창 통과: 체류 시간 = dwellTime(v) (기획서 7장 선형 규칙)
-        const vy = config.ringWindowWu / Math.max(0.05, dwellTime(this.speed));
-        e.y += vy * dt;
-        if (e.y > halfWin) {
+        // 링 내 이동 속도 = 잔여 경로 / 체류 시간 → 기획서 7장 표를 정확히 재현
+        const v = e.ringPathLen / Math.max(0.05, dwellTime(this.speed));
+        const step = v * dt;
+        e.x += e.dirX * step;
+        e.y += e.dirY * step;
+        e.ringTraveled += step;
+        if (e.ringTraveled >= e.ringPathLen) {
           e.phase = 'passing';
           this.passedCount++;
-          this.damagePlayer(config.contactDamage); // 미처치 통과 = 접촉 1 (기획서 10.0)
+          this.statsByEntry[e.entryKind].passed++;
+          this.damagePlayer(config.contactDamage); // 미처치 통과 = 접촉 1
           this.events.push({ type: 'enemyPassed', enemyId: e.id });
         }
       } else if (e.phase === 'passing') {
-        e.y += config.approachBaseWu * this.speed * dt;
-        if (e.y > config.camHeightWu + 2) e.active = false; // 카메라 뒤 프레임 아웃
-      } else if (e.phase === 'orbit') {
-        this.updateStayEnemy(e, dt);
+        const v = config.approachSpeed * this.speed;
+        e.x += e.dirX * v * dt;
+        e.y += e.dirY * v * dt;
+        if (e.y > this.field.topY + config.spawnMargin) e.active = false; // 상단 프레임 아웃
       }
     }
   }
 
+  /** a-2 지그재그 — 진행 방향에 수직인 사인 진동. 링 안에서는 감쇠(가독성) */
+  private applyZigzag(e: Enemy): void {
+    if (e.type !== 'a-2') return;
+    const damp = e.phase === 'ring' ? 0.25 : 1;
+    const next = Math.sin(this.time * ZIGZAG_FREQ + e.zigzagSeed) * ZIGZAG_AMPLITUDE * damp;
+    const delta = next - e.zigzagOffset;
+    e.x += -e.dirY * delta;
+    e.y += e.dirX * delta;
+    e.zigzagOffset = next;
+  }
+
   private updateStayEnemy(e: Enemy, dt: number): void {
-    e.orbitAngle += ORBIT_SPEED * e.orbitDir * dt;
-    let r = e.type === 'a-4' ? config.ringRadiusWu * A4_ORBIT_R : config.ringRadiusWu * A5_EDGE_R;
-    if (e.type === 'a-5' && e.exposeTimer > 0) {
-      e.exposeTimer -= dt;
-      r = config.ringRadiusWu * A5_EXPOSE_R; // 발사 후 1초 링 안 노출 (기획서 10.1)
+    const target = this.orbitPosition(e);
+    if (e.phase === 'approach') {
+      const v = config.approachSpeed * this.speed * 1.15;
+      const dx = target.x - e.x, dy = target.y - e.y;
+      const d = Math.hypot(dx, dy);
+      if (d <= v * dt || d < 1e-4) {
+        e.x = target.x; e.y = target.y;
+        e.phase = 'orbit';
+        e.attackProgress = 0;
+        this.events.push({ type: 'ringEnter', enemyId: e.id });
+      } else {
+        e.x += (dx / d) * v * dt;
+        e.y += (dy / d) * v * dt;
+      }
+      return;
     }
-    e.x = this.girlX + Math.cos(e.orbitAngle) * r;
-    e.z = this.girlZ + Math.sin(e.orbitAngle) * r;
-    e.y = this.girlY;
+
+    // 선회: 슬롯 각도를 따라간다
+    e.x = target.x;
+    e.y = target.y;
+    e.orbitAngle = this.slotAngle(e.orbitSlot) + this.orbitBaseAngle;
+    if (e.type === 'a-5' && e.exposeTimer > 0) e.exposeTimer -= dt;
 
     // 공격 주기 (속도 비례 단축, 정규화 진행률로 연속성 유지)
     const period = attackPeriod(this.speed);
@@ -544,10 +708,10 @@ export class Sim {
       e.attackProgress = 0;
       e.telegraphing = false;
       if (e.type === 'a-4') {
-        this.damagePlayer(config.contactDamage); // 근접 공격 적중 1 (기획서 9장)
+        this.damagePlayer(config.contactDamage); // 근접 공격 적중 1
       } else {
         this.fireProjectile(e);
-        e.exposeTimer = config.a5ExposeSec;
+        e.exposeTimer = config.a5ExposeSec; // 발사 직후 링 안으로 노출
       }
     }
   }
@@ -557,23 +721,24 @@ export class Sim {
     if (!p) return;
     p.id = this.nextId++;
     p.active = true;
-    p.x = e.x; p.y = e.y; p.z = e.z;
-    const dx = this.girlX - e.x, dz = this.girlZ - e.z;
-    const d = Math.hypot(dx, dz) || 1;
-    p.vx = (dx / d) * config.projectileSpeedWu;
-    p.vz = (dz / d) * config.projectileSpeedWu;
+    p.x = e.x; p.y = e.y;
+    p.prevX = p.x; p.prevY = p.y;
+    const dx = this.girlX - e.x, dy = this.girlY - e.y;
+    const d = Math.hypot(dx, dy) || 1;
+    p.vx = (dx / d) * config.projectileSpeed;
+    p.vy = (dy / d) * config.projectileSpeed;
   }
 
   private updateProjectiles(dt: number): void {
     for (const p of this.projectilePool) {
       if (!p.active) continue;
       p.x += p.vx * dt;
-      p.z += p.vz * dt;
-      const d = Math.hypot(p.x - this.girlX, p.z - this.girlZ);
-      if (d < 0.35) {
+      p.y += p.vy * dt;
+      const d = Math.hypot(p.x - this.girlX, p.y - this.girlY);
+      if (d < 0.05) {
         p.active = false;
-        this.damagePlayer(config.contactDamage); // 투사체 피격 1 (기획서 9장)
-      } else if (d > config.ringRadiusWu * 4) {
+        this.damagePlayer(config.contactDamage); // 투사체 피격 1
+      } else if (d > config.ringRadiusFrac * 4) {
         p.active = false;
       }
     }
@@ -581,29 +746,29 @@ export class Sim {
 
   // ─────────────────────────── 도약 ───────────────────────────
 
-  /** 현재 활성 적이 가장 밀집한 방향 탐색 (기획서 8장 자동 경로) */
+  /** 현재 활성 적이 가장 밀집한 방향 (기획서 v2 8장). 잔적 없으면 하방 직진 (M1 검수 질문 8) */
   private retargetDive(): void {
     const act = this.enemyPool.filter(e => e.active);
     if (act.length === 0) {
-      this.diveTargetX = this.girlX; this.diveTargetY = this.girlY - 6; this.diveTargetZ = this.girlZ;
+      this.diveTargetX = this.girlX;
+      this.diveTargetY = this.girlY - 0.5;
       return;
     }
-    let best: Enemy = act[0], bestScore = -1;
+    const RADIUS2 = 0.36 * 0.36;
+    let best = act[0], bestScore = -1;
     for (const e of act) {
       let n = 0;
       for (const o of act) {
-        const d2 = (e.x - o.x) ** 2 + (e.y - o.y) ** 2 + (e.z - o.z) ** 2;
-        if (d2 < 9) n++;
+        if ((e.x - o.x) ** 2 + (e.y - o.y) ** 2 < RADIUS2) n++;
       }
       if (n > bestScore) { bestScore = n; best = e; }
     }
-    // 클러스터 중심
-    let cx = 0, cy = 0, cz = 0, cn = 0;
+    let cx = 0, cy = 0, cn = 0;
     for (const o of act) {
-      const d2 = (best.x - o.x) ** 2 + (best.y - o.y) ** 2 + (best.z - o.z) ** 2;
-      if (d2 < 9) { cx += o.x; cy += o.y; cz += o.z; cn++; }
+      if ((best.x - o.x) ** 2 + (best.y - o.y) ** 2 < RADIUS2) { cx += o.x; cy += o.y; cn++; }
     }
-    this.diveTargetX = cx / cn; this.diveTargetY = cy / cn; this.diveTargetZ = cz / cn;
+    this.diveTargetX = cx / cn;
+    this.diveTargetY = cy / cn;
   }
 
   private updateDive(dt: number): void {
@@ -611,39 +776,43 @@ export class Sim {
     this.diveKillCooldown -= dt;
     this.retargetDive();
 
-    // 목표를 향해 비행
     const dx = this.diveTargetX - this.girlX;
     const dy = this.diveTargetY - this.girlY;
-    const dz = this.diveTargetZ - this.girlZ;
-    const d = Math.hypot(dx, dy, dz);
-    if (d > 0.1) {
-      const v = Math.min(config.diveSpeedWu * dt, d);
+    const d = Math.hypot(dx, dy);
+    if (d > 0.01) {
+      const v = Math.min(config.diveSpeed * dt, d);
       this.girlX += (dx / d) * v;
       this.girlY += (dy / d) * v;
-      this.girlZ += (dz / d) * v;
     }
+    // 화면 밖으로 나가지 않도록 클램프
+    const area = activeJudgeArea();
+    const marginX = 0.5 - config.ringRadiusFrac * 0.5;
+    const marginY = this.field.aspect / 2 - area.halfExtentY() * 0.5;
+    this.girlX = Math.max(-marginX, Math.min(marginX, this.girlX));
+    this.girlY = Math.max(-marginY, Math.min(marginY, this.girlY));
 
-    // 판정 링에 들어온 적 순차 자동 격파 (기획서 8장)
+    // 판정 링에 들어온 적 순차 자동 격파 (도약 중 깃털 미지급)
     if (this.diveKillCooldown <= 0) {
       let nearest: Enemy | null = null;
       let nd = Infinity;
       for (const e of this.enemyPool) {
         if (!e.active) continue;
-        const dd = Math.hypot(e.x - this.girlX, e.y - this.girlY, e.z - this.girlZ);
-        if (dd <= config.ringRadiusWu && dd < nd) { nd = dd; nearest = e; }
+        if (!area.contains(e.x, e.y, this.girlX, this.girlY)) continue;
+        const dd = Math.hypot(e.x - this.girlX, e.y - this.girlY);
+        if (dd < nd) { nd = dd; nearest = e; }
       }
       if (nearest) {
-        this.events.push({ type: 'slashHit', enemyId: nearest.id, killed: true, x: nearest.x, y: nearest.y, z: nearest.z });
-        this.killEnemy(nearest, true); // 도약 중 깃털 미지급
+        this.events.push({ type: 'slashHit', enemyId: nearest.id, enemyType: nearest.type, killed: true, x: nearest.x, y: nearest.y });
+        this.killEnemy(nearest, true);
         this.diveKillCooldown = config.diveKillStaggerSec;
       }
     }
 
     if (this.diveTimer <= 0) {
       this.diveActive = false;
-      this.speed = config.diveEndSpeed;         // 3.0x 강제 복귀 (기획서 8장)
-      this.toggleLockTimer = config.diveToggleLockSec; // 1초 토글 잠금
-      this.returnTimer = 0.4;
+      this.speed = config.diveEndSpeed;                 // 3.0x 강제 복귀
+      this.toggleLockTimer = config.diveToggleLockSec;  // 1초 토글 잠금
+      this.returnTimer = DIVE_RETURN_SEC;
       this.events.push({ type: 'diveEnd' });
     }
   }

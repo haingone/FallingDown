@@ -18,6 +18,9 @@ export class Hud {
   private banner: HTMLElement;
   private flash: HTMLElement;
   private flashTimer = 0;
+  /** 배율 숫자 스케일 펄스 (r3 항목 6) */
+  private pulseTimer = 0;
+  private static readonly PULSE_SEC = 0.16;
 
   constructor(stage: HTMLElement, onDive: () => void) {
     this.root = document.createElement('div');
@@ -50,6 +53,11 @@ export class Hud {
 
   playerHitFlash(): void { this.flashTimer = 0.25; }
 
+  /** 격파 순간 배율 숫자 펄스 (r3 항목 6) */
+  killPulse(): void {
+    if (config.uiPulseStrength > 0) this.pulseTimer = Hud.PULSE_SEC;
+  }
+
   update(sim: Sim, dtSec: number): void {
     // HP 5칸
     let hearts = '';
@@ -61,6 +69,16 @@ export class Hud {
     this.multEl.textContent = `${m.toFixed(1)}x`;
     const t = (sim.speed - config.speedMin) / (config.speedMax - config.speedMin);
     this.multEl.style.color = `hsl(${120 - 120 * t}, 90%, 60%)`;
+
+    // 격파 펄스: 짧게 커졌다 돌아온다
+    if (this.pulseTimer > 0) {
+      this.pulseTimer -= dtSec;
+      const k = Math.max(0, this.pulseTimer / Hud.PULSE_SEC);
+      const scale = 1 + config.uiPulseStrength * Math.sin(Math.PI * k);
+      this.multEl.style.transform = `scale(${scale.toFixed(3)})`;
+    } else {
+      this.multEl.style.transform = 'scale(1)';
+    }
 
     // 콤보: 3.0x 유지 시에만 노출 (기획서 15장)
     this.comboEl.textContent = sim.speed >= config.speedMax - 1e-9 && sim.combo > 0 ? ` C${sim.combo}` : '';
