@@ -1,4 +1,4 @@
-# FallingDown — P1 HD-2D 전환 프로토타입
+# FallingDown — HD-2D 플레이어블 (P1 완료 → P1.5 픽셀 목업 진행 중)
 
 > 지시문: `docs/instructions/P1_hd2d_conversion.md` / 기획서: `fallingdown_game_design.md` v2.0
 > 스택: TypeScript + Vite + three.js (패키지 매니저: npm, lockfile 커밋)
@@ -66,6 +66,18 @@ npm test           # Playwright 자가 검증 22개 (입력·2D 동선·게이�
 - `?stats=1` — 좌하단 성능 미니 오버레이 상시 표시 (FPS·1% low·draw call·파편 수)
 - `?seed=N` — 스폰 난수 시드 고정 (기본 20260821)
 
+## 스프라이트 반입 (P1.5)
+
+AD가 산출한 Sprite-Gen 결과물을 저장소 루트 **`art/sprites/`** 에 넣으면 게임이 자동으로 읽어
+실루엣 플레이스홀더를 대체합니다. **비어 있어도 정상 동작**하며 실루엣이 유지됩니다(점진 적용).
+
+- 규격·확인 방법: **`art/sprites/README.md`**
+- 반입 상태는 튜닝 패널 통계에 `스프라이트 시트 N클립/M프레임 …` 또는 `실루엣(미반입)` 으로 표시됩니다.
+- 개발 서버는 `/sprites/` 로 서빙하고, 빌드 시 `dist/sprites/` 로 복사됩니다
+  (`vite.config.ts` 의 `fd-sprite-assets` 플러그인).
+
+**픽셀 스케일링은 기본 ON**(1/3 저해상도 렌더 → 정수 배 확대)입니다. 패널에서 네이티브로 전환해 비교할 수 있습니다.
+
 ## 구조 (로직-렌더링 분리)
 
 ```
@@ -75,7 +87,10 @@ src/core/     # 순수 TS — three.js/DOM 미참조 (엔진 교체 대비 이�
   classifier.ts # 탭/스와이프 분류기 (M1 이월, 오분류 0% 검증)
   field.ts      # 2D 플레이 평면 ↔ 화면 좌표 매핑 (M1의 원근 투영을 대체)
   judgeArea.ts  # 판정 영역 전략 — B 화면 밴드(확정) / A 원형 링(폐기 예정)
-src/render/juice.ts  # 격파 피드백 — 파편·임팩트 플래시·스케일 팝·카메라 펀치·밴드 플래시
+src/render/
+  juice.ts        # 격파 피드백 — 파편·임팩트 플래시·스케일 팝·카메라 펀치·밴드 플래시
+  spriteSheet.ts  # Sprite-Gen manifest+시트 로더 (미반입 시 실루엣 유지)
+  sprites.ts      # 스프라이트 공급자 — 시트 우선, 없으면 런타임 캔버스 실루엣
   runner.ts     # 고정 타임스텝(120Hz) + 렌더 보간
   rng.ts        # 시드 RNG
 src/data/     # waves.json — 90초 웨이브 시퀀스 (코드와 분리된 데이터)

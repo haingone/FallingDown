@@ -35,6 +35,7 @@ interface EnemyView {
   mesh: THREE.Mesh;
   mat: THREE.MeshBasicMaterial;
   type: EnemyType | null;
+  aspect: number;
 }
 
 interface Ruin {
@@ -222,21 +223,23 @@ export class Renderer2D {
     this.band.frustumCulled = false;
     this.sceneGame.add(this.band);
 
+    // 스프라이트 메시는 단위 평면 — 크기는 프레임 종횡비에 맞춰 매 프레임 scale로 정한다
+    // (Sprite-Gen 셀 비율이 실루엣과 다를 수 있으므로)
+    const unitQuad = new THREE.PlaneGeometry(1, 1);
     this.girlMat = new THREE.MeshBasicMaterial({
       map: this.textures.girlFolded, transparent: true, color: 0xf2f4ff, depthWrite: false,
     });
-    this.girl = new THREE.Mesh(new THREE.PlaneGeometry(GIRL_HEIGHT * (160 / 224), GIRL_HEIGHT), this.girlMat);
+    this.girl = new THREE.Mesh(unitQuad, this.girlMat);
     this.girl.position.z = 0;
     this.sceneGame.add(this.girl);
 
-    const enemyGeo = new THREE.PlaneGeometry(ENEMY_SIZE * (96 / 112), ENEMY_SIZE);
     for (let i = 0; i < 64; i++) {
       const mat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false });
-      const mesh = new THREE.Mesh(enemyGeo, mat);
+      const mesh = new THREE.Mesh(unitQuad, mat);
       mesh.position.z = 0.1;
       mesh.visible = false;
       this.sceneGame.add(mesh);
-      this.enemyViews.push({ mesh, mat, type: null });
+      this.enemyViews.push({ mesh, mat, type: null, aspect: 96 / 112 });
     }
 
     const projGeo = new THREE.CircleGeometry(0.028, 10);
@@ -366,7 +369,8 @@ export class Renderer2D {
    * @param dirX,dirY 스와이프 진행 방향 (필드 단위 정규화). 도약 자동 격파는 0,0 → 순수 방사
    */
   spawnKill(x: number, y: number, type: EnemyType, dirX: number, dirY: number): void {
-    this.juice.spawnKill(x, y, ENEMY_COLOR[type], dirX, dirY, this.textures.enemy(type), ENEMY_SIZE);
+    // 격파 고스트는 정지 이미지 — 실루엣/시트 어느 쪽이든 현재 프레임 텍스처를 그대로 승계
+    this.juice.spawnKill(x, y, ENEMY_COLOR[type], dirX, dirY, this.textures.enemy(type).texture, ENEMY_SIZE);
   }
 
   /** 프레임 시작 — 다중 격파 카메라 펀치 합산용 래치 해제 */
@@ -379,6 +383,18 @@ export class Renderer2D {
   }
 
   drawCalls(): number { return this.drawCallCount; }
+  /**
+   * AD 산출 스프라이트 시트 반입 (P1.5 §B-1).
+   * 반입 실패·미반입이면 실루엣 플레이스홀더가 그대로 유지된다.
+   */
+  async loadSprites(): Promise<boolean> {
+    return this.textures.loadAtlas();
+  }
+  /** 스프라이트 반입 상태 (패널 표시·검증용) */
+  spriteInfo(): ReturnType<SpriteTextures['atlasInfo']> { return this.textures.atlasInfo(); }
+  /** 스프라이트 공급자 (자가 검증용 접근) */
+  get spriteTextures(): SpriteTextures { return this.textures; }
+
   /** 현재 살아있는 베기 궤적 수 */
   slashActiveCount(): number { return this.slash.activeCount(); }
   /** 현재 살아있는 격파 파편 수 (총량 상한 확인용) */
@@ -455,8 +471,12 @@ export class Renderer2D {
     }
 
     this.girl.position.set(gx, gy, 0);
-    this.girlMat.map = sim.umbrellaOpen ? this.textures.girlOpen : this.textures.girlFolded;
-    this.girlMat.needsUpdate = true;
+    const girlFrame = this.textures.girl(sim.umbrellaOpen, sim.time);
+    if (this.girlMat.map !== girlFrame.texture) {
+      this.girlMat.map = girlFrame.texture;
+      this.girlMat.needsUpdate = true;
+    }
+    this.girl.scale.set(GIRL_HEIGHT * girlFrame.aspect, GIRL_HEIGHT, 1);
     // 피격 무적 점멸 / 도약 시 돌진 자세(진행 방향으로 기울임)
     const blinking = sim.invulnTimer > 0 && Math.floor(sim.invulnTimer * 20) % 2 === 0;
     this.girlMat.color.setHex(sim.diveActive ? 0xffe08a : blinking ? 0xff8080 : 0xf2f4ff);
@@ -472,11 +492,14 @@ export class Renderer2D {
       if (!e) { v.mesh.visible = false; continue; }
       v.mesh.visible = true;
       v.mesh.position.set(lerp(e.prevX, e.x), lerp(e.prevY, e.y), 0.1);
-      if (v.type !== e.type) {
-        v.type = e.type;
-        v.mat.map = this.textures.enemy(e.type);
+      // 스프라이트 시트가 반입되면 프레임 애니메이션이 붙는다 (개체별 위상차)
+      const frame = this.textures.enemy(e.type, sim.time + e.zigzagSeed);
+      if (v.mat.map !== frame.texture) {
+        v.mat.map = frame.texture;
         v.mat.needsUpdate = true;
       }
+      v.type = e.type;
+      v.aspect = frame.aspect;
       const inRing = e.phase === 'ring' || (e.phase === 'orbit' && (e.type !== 'a-5' || e.exposeTimer > 0));
       let color = ENEMY_COLOR[e.type];
       if (e.telegraphing) color = TELEGRAPH;
@@ -488,7 +511,7 @@ export class Renderer2D {
       if (e.lifecycle === 'pass') v.mesh.rotation.z = Math.atan2(e.dirY, e.dirX) - Math.PI / 2;
       else v.mesh.rotation.z = 0;
       const s = e.telegraphing ? 1.18 : 1;
-      v.mesh.scale.setScalar(s);
+      v.mesh.scale.set(ENEMY_SIZE * v.aspect * s, ENEMY_SIZE * s, 1);
     }
 
     const activeProj = sim.projectiles.filter(p => p.active);

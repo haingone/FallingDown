@@ -205,7 +205,7 @@ export const DEFAULT_BALANCE: BalanceConfig = {
   uiPulseStrength: 0.35,
   hitstopMultiEnabled: true,
   hitstopMultiMaxMs: 60,
-  pixelScaleMode: 'native',
+  pixelScaleMode: 'pixel', // P1.5 §B-2: 픽셀 아트 목업 기본값
   pixelScaleFactor: 3,
 
   scoreLow: 100,

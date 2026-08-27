@@ -7,6 +7,7 @@
  */
 import * as THREE from 'three';
 import type { EnemyType } from '../core/sim';
+import { loadSpriteAtlas, type SpriteAtlas, type SpriteFrame, type ClipKey } from './spriteSheet';
 
 function makeCanvas(w: number, h: number): { cv: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
   const cv = document.createElement('canvas');
@@ -149,10 +150,19 @@ function drawEnemy(ctx: CanvasRenderingContext2D, w: number, h: number, type: En
   ctx.fillText(type, cx, h * 0.87);
 }
 
+const GIRL_ASPECT = 160 / 224;
+const ENEMY_ASPECT = 96 / 112;
+
+/**
+ * 스프라이트 공급자.
+ * `art/sprites/` 에 Sprite-Gen 산출물이 반입되면 그것을 쓰고, 없으면 런타임 실루엣을 유지한다
+ * (지시문 P1.5 §B-1의 "점진 적용 구조").
+ */
 export class SpriteTextures {
   readonly girlFolded: THREE.CanvasTexture;
   readonly girlOpen: THREE.CanvasTexture;
   private enemyCache = new Map<EnemyType, THREE.CanvasTexture>();
+  private atlas: SpriteAtlas | null = null;
 
   constructor() {
     const a = makeCanvas(160, 224);
@@ -164,7 +174,47 @@ export class SpriteTextures {
     this.girlOpen = toTexture(b.cv);
   }
 
-  enemy(type: EnemyType): THREE.CanvasTexture {
+  /** 비동기 반입 — 로드에 실패해도 조용히 실루엣을 유지한다 */
+  async loadAtlas(baseUrl?: string): Promise<boolean> {
+    this.atlas = await loadSpriteAtlas(baseUrl);
+    return this.atlas !== null;
+  }
+
+  /** 반입 상태 (패널·리포트 표시용) */
+  atlasInfo(): { loaded: boolean; clips: number; frames: number; sheet: string; size: string } {
+    if (!this.atlas) return { loaded: false, clips: 0, frames: 0, sheet: '—', size: '—' };
+    return {
+      loaded: true,
+      clips: this.atlas.clips.size,
+      frames: this.atlas.frameCount,
+      sheet: this.atlas.sheetFile,
+      size: `${this.atlas.sheetWidth}×${this.atlas.sheetHeight}`,
+    };
+  }
+
+  private clipFrame(key: ClipKey, timeSec: number): SpriteFrame | null {
+    const clip = this.atlas?.clips.get(key);
+    if (!clip || clip.frames.length === 0) return null;
+    const i = Math.floor(timeSec * clip.fps) % clip.frames.length;
+    return clip.frames[i];
+  }
+
+  /** 소녀 스프라이트 (접음/펼침 2스탠스) */
+  girl(open: boolean, timeSec: number): SpriteFrame {
+    const fromAtlas = this.clipFrame(open ? 'girl.open' : 'girl.folded', timeSec);
+    if (fromAtlas) return fromAtlas;
+    return { texture: open ? this.girlOpen : this.girlFolded, aspect: GIRL_ASPECT };
+  }
+
+  /** 적 스프라이트 */
+  enemy(type: EnemyType, timeSec = 0): SpriteFrame {
+    const fromAtlas = this.clipFrame(type as ClipKey, timeSec);
+    if (fromAtlas) return fromAtlas;
+    return { texture: this.enemySilhouette(type), aspect: ENEMY_ASPECT };
+  }
+
+  /** 실루엣 원본 (격파 고스트 등 정지 이미지용) */
+  enemySilhouette(type: EnemyType): THREE.CanvasTexture {
     let tex = this.enemyCache.get(type);
     if (!tex) {
       const { cv, ctx } = makeCanvas(96, 112);

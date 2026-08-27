@@ -87,6 +87,12 @@ test('HD-2D 최종 웨이브 실시간 FPS 실측 + 픽셀 스케일링 비교',
   await page.evaluate(() => { (window as any).__fd.config.slashLifeSec = 0.3; }); // 기본값 복귀
 
   // 최종 웨이브 = 최고 밀도 구간에서 8초 실시간 측정 (네이티브)
+  // 기본값이 pixel(P1.5 §B-2)이므로 네이티브 표본은 반드시 명시 설정한다
+  await page.evaluate(() => {
+    const fd = (window as any).__fd;
+    fd.config.pixelScaleMode = 'native';
+    fd.relayout();
+  });
   await fastForwardToFinalWave(page);
   await page.waitForTimeout(8000);
   await page.screenshot({ path: 'test-results/screens/04-final-wave-native.png' });
@@ -105,12 +111,6 @@ test('HD-2D 최종 웨이브 실시간 FPS 실측 + 픽셀 스케일링 비교',
   const pixelBuffer = await page.evaluate(() => {
     const c = document.getElementById('game-canvas') as HTMLCanvasElement;
     return { bufferW: c.width, bufferH: c.height, cssW: c.clientWidth, cssH: c.clientHeight };
-  });
-
-  await page.evaluate(() => {
-    const fd = (window as any).__fd;
-    fd.config.pixelScaleMode = 'native';
-    fd.relayout();
   });
 
   // 판정 영역 B안(화면 밴드) 장면 캡처 — A/B 시각 비교용

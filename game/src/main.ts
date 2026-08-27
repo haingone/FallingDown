@@ -39,11 +39,15 @@ const panel = new Panel(
   classifier,
   perf,
   beeper,
-  () => ({
-    drawCalls: renderer.drawCalls(),
-    overdraw: renderer.overdrawEstimate(),
-    particles: renderer.activeParticles(),
-  }),
+  () => {
+    const s = renderer.spriteInfo();
+    return {
+      drawCalls: renderer.drawCalls(),
+      overdraw: renderer.overdrawEstimate(),
+      particles: renderer.activeParticles(),
+      sprites: s.loaded ? `시트 ${s.clips}클립/${s.frames}프레임 ${s.size}` : '실루엣(미반입)',
+    };
+  },
   () => sim.restart(),
   () => layout(),
 );
@@ -63,6 +67,11 @@ function layout(): void {
 }
 window.addEventListener('resize', layout);
 layout();
+
+// AD 스프라이트 시트 반입 시도 (P1.5 §B-1) — 없으면 실루엣 유지, 게임 진행에는 영향 없음
+void renderer.loadSprites().then((ok) => {
+  if (ok) console.info('[sprites]', renderer.spriteInfo());
+});
 
 // ── 입력 ──
 interface SwipeState {

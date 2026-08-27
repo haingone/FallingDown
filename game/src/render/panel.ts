@@ -107,7 +107,7 @@ export class Panel {
     private classifier: GestureClassifier,
     private perf: PerfTracker,
     private beeper: Beeper,
-    private stats: () => { drawCalls: number; overdraw: number; particles: number },
+    private stats: () => { drawCalls: number; overdraw: number; particles: number; sprites: string },
     private onRestart: () => void,
     private onScaleModeChange: () => void,
   ) {
@@ -237,6 +237,7 @@ export class Panel {
       `▶ FPS ${this.perf.fps().toFixed(0)}  1%low ${this.perf.onePercentLow().toFixed(0)}  draw ${rs.drawCalls}`,
       `sim ${sim.time.toFixed(1)}s  wave ${sim.waveIndex + 1}/${sim.waveCount} [${sim.state}]`,
       `파편 ${rs.particles}/${config.particleBudget}  overdraw~${rs.overdraw}`,
+      `스프라이트 ${rs.sprites}  픽셀스케일 ${config.pixelScaleMode === 'pixel' ? '1/' + config.pixelScaleFactor : '네이티브'}`,
       `입력: 탭 ${s.taps} · 스와이프 ${s.swipes} · 무효 ${s.none}`,
       `오분류 의심 ${s.suspects}건 (${suspectRate}%)`,
       `속도 ${sim.speed.toFixed(2)}x  평균배율 ${sim.avgMultiplier.toFixed(2)}x  콤보 ${sim.combo}`,
