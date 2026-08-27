@@ -71,6 +71,21 @@ function cloudTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+/** 판정 밴드(B안) — 위아래 경계가 밝게 서고 안쪽은 은은하게 빛나는 가로 띠 */
+const BAND_FRAG = /* glsl */`
+  precision mediump float;
+  uniform vec3 uColor;
+  uniform float uAlpha;
+  varying vec2 vUv;
+  void main() {
+    float d = abs(vUv.y * 2.0 - 1.0);      // 0 = 중앙, 1 = 경계
+    float edge = smoothstep(0.82, 1.0, d); // 경계선
+    float fill = (1.0 - d) * 0.16;         // 내부 발광
+    float a = (edge * 0.95 + fill) * uAlpha;
+    gl_FragColor = vec4(uColor * (0.55 + 0.45 * edge), a);
+  }
+`;
+
 const SKY_VERT = /* glsl */`
   varying vec2 vUv;
   void main() {
@@ -110,6 +125,8 @@ export class Renderer2D {
   private girlMat: THREE.MeshBasicMaterial;
   private ring: THREE.Mesh;
   private ringMat: THREE.MeshBasicMaterial;
+  private band: THREE.Mesh;
+  private bandMat: THREE.ShaderMaterial;
   private enemyViews: EnemyView[] = [];
   private projViews: THREE.Mesh[] = [];
   // 레이어 ⑤
@@ -189,6 +206,25 @@ export class Renderer2D {
     this.ring = new THREE.Mesh(new THREE.RingGeometry(0.978, 1.0, 72), this.ringMat);
     this.ring.position.z = -1;
     this.sceneGame.add(this.ring);
+
+    // 판정 영역 B안: 화면 가로 발광 밴드 (지시문 P1 r2)
+    this.bandMat = new THREE.ShaderMaterial({
+      vertexShader: SKY_VERT, // vUv만 전달하면 되므로 공용
+      fragmentShader: BAND_FRAG,
+      uniforms: {
+        uColor: { value: new THREE.Color(0x6fd0ff) },
+        uAlpha: { value: 0.9 },
+      },
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.band = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.bandMat);
+    this.band.position.z = -1;
+    this.band.visible = false;
+    this.band.frustumCulled = false;
+    this.sceneGame.add(this.band);
 
     this.girlMat = new THREE.MeshBasicMaterial({
       map: this.textures.girlFolded, transparent: true, color: 0xf2f4ff, depthWrite: false,
@@ -408,10 +444,22 @@ export class Renderer2D {
     }
 
     // ── ④ 게임플레이 ──
-    this.ring.position.set(gx, gy, -1);
-    this.ring.scale.setScalar(config.ringRadiusFrac);
-    this.ringMat.color.setHex(sim.diveActive ? 0xffd45e : 0x6fd0ff);
-    this.ringMat.opacity = sim.diveActive ? 0.85 : 0.6;
+    // 판정 영역 A(원형 링) / B(화면 밴드) 전환 — 지시문 P1 r2
+    const bandMode = config.judgeArea === 'band';
+    this.ring.visible = !bandMode;
+    this.band.visible = bandMode;
+    if (bandMode) {
+      // 밴드는 화면 가로 전체 (레터박스 여유 포함)
+      this.band.position.set(0, gy, -1);
+      this.band.scale.set(1.25, config.bandHeightFrac, 1);
+      (this.bandMat.uniforms.uColor.value as THREE.Color).setHex(sim.diveActive ? 0xffd45e : 0x6fd0ff);
+      this.bandMat.uniforms.uAlpha.value = sim.diveActive ? 1.0 : 0.9;
+    } else {
+      this.ring.position.set(gx, gy, -1);
+      this.ring.scale.setScalar(config.ringRadiusFrac);
+      this.ringMat.color.setHex(sim.diveActive ? 0xffd45e : 0x6fd0ff);
+      this.ringMat.opacity = sim.diveActive ? 0.85 : 0.6;
+    }
 
     this.girl.position.set(gx, gy, 0);
     this.girlMat.map = sim.umbrellaOpen ? this.textures.girlOpen : this.textures.girlFolded;

@@ -7,7 +7,8 @@
  * 적은 화면 하단(정하방/사선)에서 진입 → 상승 → 판정 링 통과 → 상단 프레임 아웃.
  */
 import { config, dwellTime, attackPeriod, zoomForSpeed } from './balance';
-import { Field, segmentIntersectsCircle, distanceToExit } from './field';
+import { Field, segmentIntersectsCircle } from './field';
+import { activeJudgeArea } from './judgeArea';
 import { Rng } from './rng';
 
 export type EnemyType = 'a-1' | 'a-2' | 'a-3' | 'a-4' | 'a-5';
@@ -41,6 +42,7 @@ export interface Enemy {
   x: number; y: number;
   prevX: number; prevY: number; // 렌더 보간용
   dirX: number; dirY: number;   // 진행 방향 (정규화)
+  entryKind: EntryAngle;        // 진입 각도 (판정 영역 A/B 비교 통계용)
   zigzagSeed: number;
   zigzagOffset: number;         // 현재 적용된 지그재그 가로 오프셋
   // 통과형 링 판정
@@ -143,7 +145,15 @@ export class Sim {
   // 통계
   kills = 0;
   passedCount = 0;
+  /** 판정 영역에 한 번도 들어오지 못하고 프레임 아웃한 통과형 (영역 A/B 비교 지표) */
+  missedAreaCount = 0;
   hitsTaken = 0;
+  /** 통과형 진입 각도별 집계 — 판정 영역 A/B 비교용 */
+  statsByEntry: Record<EntryAngle, { spawned: number; killed: number; passed: number; missed: number }> = {
+    down: { spawned: 0, killed: 0, passed: 0, missed: 0 },
+    left: { spawned: 0, killed: 0, passed: 0, missed: 0 },
+    right: { spawned: 0, killed: 0, passed: 0, missed: 0 },
+  };
   multIntegral = 0;
   private multTimeAccum = 0;
   restartCount = 0;
@@ -166,7 +176,7 @@ export class Sim {
   private makeEnemy(): Enemy {
     return {
       id: 0, active: false, type: 'a-1', lifecycle: 'pass', phase: 'approach', hp: 1,
-      x: 0, y: 0, prevX: 0, prevY: 0, dirX: 0, dirY: 1,
+      x: 0, y: 0, prevX: 0, prevY: 0, dirX: 0, dirY: 1, entryKind: 'down',
       zigzagSeed: 0, zigzagOffset: 0, ringPathLen: 0, ringTraveled: 0,
       orbitSlot: 0, orbitAngle: 0, attackProgress: 0, telegraphing: false,
       exposeTimer: 0, armorBroken: false, spawnAnimT: 0, lastCountedHitMs: -1e9,
@@ -211,7 +221,12 @@ export class Sim {
     for (const e of this.enemyPool) e.active = false;
     for (const p of this.projectilePool) p.active = false;
     this.pendingStay.length = 0;
-    this.kills = 0; this.passedCount = 0; this.hitsTaken = 0;
+    this.kills = 0; this.passedCount = 0; this.hitsTaken = 0; this.missedAreaCount = 0;
+    this.statsByEntry = {
+      down: { spawned: 0, killed: 0, passed: 0, missed: 0 },
+      left: { spawned: 0, killed: 0, passed: 0, missed: 0 },
+      right: { spawned: 0, killed: 0, passed: 0, missed: 0 },
+    };
     this.multIntegral = 0; this.multTimeAccum = 0;
     this.swipeHadTargets = false;
     this.rng = new Rng(this.seed + this.restartCount * 7919);
@@ -320,6 +335,7 @@ export class Sim {
   private killEnemy(e: Enemy, inDive: boolean): void {
     e.active = false;
     this.kills++;
+    if (e.lifecycle === 'pass') this.statsByEntry[e.entryKind].killed++;
     const def = ENEMY_DEF[e.type];
     const mult = this.multiplier;
     // 깃털: 하급만, 도약 중 미지급 (기획서 v2 8장).
@@ -458,7 +474,10 @@ export class Sim {
       // 전원이 판정 링을 통과해야 의미가 있으므로 편대 폭을 링 지름의 80% 안으로 클램프한다.
       const n = entry.formationCount ?? this.rng.int(5, 8);
       const dir = this.entryDirection(entry.entry);
-      const maxSpacing = (config.ringRadiusFrac * 2 * 0.8) / Math.max(1, n - 1);
+      // 밴드 방식은 가로 전체가 판정 영역이라 클램프가 불필요하다 (전원이 반드시 밴드를 지난다)
+      const maxSpacing = activeJudgeArea().kind === 'band'
+        ? Infinity
+        : (config.ringRadiusFrac * 2 * 0.8) / Math.max(1, n - 1);
       const spacing = Math.min(config.formationSpacing, maxSpacing);
       for (let i = 0; i < n; i++) {
         const off = (i - (n - 1) / 2) * spacing;
@@ -476,18 +495,18 @@ export class Sim {
   }
 
   /** 통과형 진입 각도 (기획서 v2 10.0: 정하방 / 사선 좌우) */
-  private entryDirection(entry?: EntryAngle): { x: number; y: number } {
+  private entryDirection(entry?: EntryAngle): { x: number; y: number; kind: EntryAngle } {
     const pick: EntryAngle = entry ?? (['down', 'left', 'right'] as EntryAngle[])[this.rng.int(0, 2)];
-    if (pick === 'down') return { x: 0, y: 1 };
+    if (pick === 'down') return { x: 0, y: 1, kind: pick };
     const rad = (DIAGONAL_DEG * Math.PI) / 180;
     // 'left' = 좌측 하단에서 진입 → 우상향
     const sign = pick === 'left' ? 1 : -1;
-    return { x: Math.sin(rad) * sign, y: Math.cos(rad) };
+    return { x: Math.sin(rad) * sign, y: Math.cos(rad), kind: pick };
   }
 
   private spawnEnemy(
     type: EnemyType,
-    dir: { x: number; y: number } | undefined,
+    dir: { x: number; y: number; kind: EntryAngle } | undefined,
     formationOffset: number | undefined,
     formationStagger = 0,
   ): void {
@@ -522,24 +541,28 @@ export class Sim {
       return;
     }
 
-    // 통과형: 링 안을 스치도록 목표점을 잡고, 진입 방향의 반대편으로 역산해 스폰
+    // 통과형: 판정 영역을 스치도록 목표점을 잡고, 진입 방향의 반대편으로 역산해 스폰
     const d = dir ?? this.entryDirection();
     e.dirX = d.x; e.dirY = d.y;
+    e.entryKind = d.kind;
     e.phase = 'approach';
+    this.statsByEntry[d.kind].spawned++;
     const R = config.ringRadiusFrac;
     // 편대는 링 중심을 겨냥 (전원이 판정 창을 지나야 하므로 산포 없음)
     const spread = formationOffset !== undefined ? 0 : R * TARGET_SPREAD;
     let tx = this.girlX + (spread > 0 ? this.rng.range(-spread, spread) : 0);
     let ty = this.girlY + (spread > 0 ? this.rng.range(-spread, spread) : 0);
     if (formationOffset !== undefined) {
-      // 편대는 진행 방향에 수직으로 배열 + 진행축으로 약간의 어긋남
-      tx += -d.y * formationOffset + d.x * formationStagger;
-      ty += d.x * formationOffset + d.y * formationStagger;
+      // 편대는 진행 방향에 **수직**으로 배열 (목표점 자체를 옮긴다)
+      tx += -d.y * formationOffset;
+      ty += d.x * formationOffset;
     }
-    // 목표점에서 진입 방향 반대로 화면 밖까지 물러난 지점이 스폰 위치
+    // 목표점에서 진입 방향 반대로 화면 밖까지 물러난 지점이 스폰 위치.
+    // 진행축 어긋남(stagger)은 목표점이 아니라 **스폰 위치에만** 더한다 —
+    // 목표점에 더하면 back 계산의 |ty| 항과 정확히 상쇄돼 무효가 된다 (평평한 일렬이 됨).
     const back = (this.field.aspect / 2 + config.spawnMargin + Math.abs(ty)) / Math.max(0.2, d.y);
-    e.x = tx - d.x * back;
-    e.y = ty - d.y * back;
+    e.x = tx - d.x * (back - formationStagger);
+    e.y = ty - d.y * (back - formationStagger);
     e.prevX = e.x; e.prevY = e.y;
   }
 
@@ -570,7 +593,7 @@ export class Sim {
   // ─────────────────────────── 적 갱신 ───────────────────────────
 
   private updateEnemies(dt: number): void {
-    const R = config.ringRadiusFrac;
+    const area = activeJudgeArea();
     for (const e of this.enemyPool) {
       if (!e.active) continue;
       if (e.spawnAnimT < 1) e.spawnAnimT = Math.min(1, e.spawnAnimT + dt * 4);
@@ -586,18 +609,21 @@ export class Sim {
         e.x += e.dirX * v * dt;
         e.y += e.dirY * v * dt;
         this.applyZigzag(e);
-        // 링을 스치지 못하고 지나쳐 버린 개체 회수 (편대 바깥쪽 등) — 웨이브 교착 방지
+        // 판정 영역을 스치지 못하고 지나쳐 버린 개체 회수 (편대 바깥쪽 등) — 웨이브 교착 방지.
+        // 밴드 방식에서는 상방 이동하는 통과형이 반드시 밴드를 지나므로 구조적으로 발생하지 않는다.
         if (e.y > this.field.topY + config.spawnMargin) {
           e.active = false;
+          this.missedAreaCount++;
+          this.statsByEntry[e.entryKind].missed++;
           continue;
         }
-        // 링 진입 판정
-        if (Math.hypot(e.x - this.girlX, e.y - this.girlY) <= R) {
+        // 판정 영역 진입
+        if (area.contains(e.x, e.y, this.girlX, this.girlY)) {
           e.phase = 'ring';
           e.ringTraveled = 0;
           e.ringPathLen = Math.max(
             1e-4,
-            distanceToExit(e.x, e.y, e.dirX, e.dirY, this.girlX, this.girlY, R),
+            area.distanceToExit(e.x, e.y, e.dirX, e.dirY, this.girlX, this.girlY),
           );
           this.events.push({ type: 'ringEnter', enemyId: e.id });
         }
@@ -611,6 +637,7 @@ export class Sim {
         if (e.ringTraveled >= e.ringPathLen) {
           e.phase = 'passing';
           this.passedCount++;
+          this.statsByEntry[e.entryKind].passed++;
           this.damagePlayer(config.contactDamage); // 미처치 통과 = 접촉 1
           this.events.push({ type: 'enemyPassed', enemyId: e.id });
         }
@@ -747,8 +774,9 @@ export class Sim {
       this.girlY += (dy / d) * v;
     }
     // 화면 밖으로 나가지 않도록 클램프
+    const area = activeJudgeArea();
     const marginX = 0.5 - config.ringRadiusFrac * 0.5;
-    const marginY = this.field.aspect / 2 - config.ringRadiusFrac * 0.5;
+    const marginY = this.field.aspect / 2 - area.halfExtentY() * 0.5;
     this.girlX = Math.max(-marginX, Math.min(marginX, this.girlX));
     this.girlY = Math.max(-marginY, Math.min(marginY, this.girlY));
 
@@ -758,8 +786,9 @@ export class Sim {
       let nd = Infinity;
       for (const e of this.enemyPool) {
         if (!e.active) continue;
+        if (!area.contains(e.x, e.y, this.girlX, this.girlY)) continue;
         const dd = Math.hypot(e.x - this.girlX, e.y - this.girlY);
-        if (dd <= config.ringRadiusFrac && dd < nd) { nd = dd; nearest = e; }
+        if (dd < nd) { nd = dd; nearest = e; }
       }
       if (nearest) {
         this.events.push({ type: 'slashHit', enemyId: nearest.id, killed: true, x: nearest.x, y: nearest.y });

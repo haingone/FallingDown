@@ -24,8 +24,8 @@ test('튜닝 패널: HD-2D 신규 항목(링 반경·선회·게이지 A/B·픽�
   await ready(page, { idle: true });
   await page.locator('#panel-toggle').dispatchEvent('pointerdown');
 
-  // 링 반경 — 화면 폭 비율
-  const ringSlider = page.locator('.panel-row', { hasText: '판정 링 반경' }).locator('input[type=range]');
+  // 링 반경 — 화면 폭 비율 (판정 영역 A안)
+  const ringSlider = page.locator('.panel-row', { hasText: 'A: 링 반경' }).locator('input[type=range]');
   await ringSlider.fill('0.45');
   expect(await page.evaluate(() => (window as any).__fd.config.ringRadiusFrac)).toBeCloseTo(0.45, 3);
 

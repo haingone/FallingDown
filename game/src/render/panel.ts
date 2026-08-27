@@ -2,7 +2,7 @@
  * 튜닝 패널 (P1 디버그) — M1 항목 이월 + HD-2D 확장 (지시문 P1 §5).
  * 핵심 수치를 새로고침 없이 조정 + 세션 통계 표시. `?debug=0`으로 숨김.
  */
-import { config, resetConfig, BalanceConfig, PixelScaleMode } from '../core/balance';
+import { config, resetConfig, BalanceConfig, PixelScaleMode, JudgeAreaKind } from '../core/balance';
 import type { Sim } from '../core/sim';
 import type { GestureClassifier } from '../core/classifier';
 import type { PerfTracker } from './perf';
@@ -21,11 +21,15 @@ interface ToggleField {
   key: keyof BalanceConfig;
   label: string;
 }
-interface ModeField {
-  kind: 'mode';
+interface SelectField {
+  kind: 'select';
+  key: 'pixelScaleMode' | 'judgeArea';
   label: string;
+  options: [string, string][];
+  /** 선택 시 렌더 해상도 재설정이 필요한가 */
+  relayout?: boolean;
 }
-type Field = SliderField | ToggleField | ModeField;
+type Field = SliderField | ToggleField | SelectField;
 
 const FIELDS: Field[] = [
   // ── 입력 (M1 검증치) ──
@@ -36,7 +40,12 @@ const FIELDS: Field[] = [
   { kind: 'slider', key: 'accelPerSec', label: '접음 가속 (x/s)', min: 0.05, max: 1, step: 0.05 },
   { kind: 'slider', key: 'decelPerSec', label: '펼침 감속 (x/s)', min: 0.25, max: 3, step: 0.25 },
   // ── 2D 판정·동선 ──
-  { kind: 'slider', key: 'ringRadiusFrac', label: '판정 링 반경 (화면 폭 비)', min: 0.15, max: 0.7, step: 0.01 },
+  {
+    kind: 'select', key: 'judgeArea', label: '★ 판정 영역 (A/B)',
+    options: [['circle', 'A 원형 링'], ['band', 'B 화면 밴드']],
+  },
+  { kind: 'slider', key: 'ringRadiusFrac', label: 'A: 링 반경 (화면 폭 비)', min: 0.15, max: 0.7, step: 0.01 },
+  { kind: 'slider', key: 'bandHeightFrac', label: 'B: 밴드 높이 (화면 폭 비)', min: 0.15, max: 1.2, step: 0.01 },
   { kind: 'slider', key: 'girlScreenFrac', label: '소녀 세로 위치 (0=상 1=하)', min: 0.25, max: 0.7, step: 0.01 },
   { kind: 'slider', key: 'dwellScale', label: '통과형 체류시간 배수', min: 0.5, max: 2.5, step: 0.1 },
   { kind: 'slider', key: 'attackPeriodScale', label: '체류형 공격주기 배수', min: 0.5, max: 2.5, step: 0.1 },
@@ -59,7 +68,10 @@ const FIELDS: Field[] = [
   { kind: 'slider', key: 'shakeStrength', label: '셰이크 강도 (px)', min: 0, max: 16, step: 0.5 },
   { kind: 'slider', key: 'objectDensity', label: '3D 오브젝트 밀도', min: 0, max: 1, step: 0.1 },
   // ── 픽셀 스케일링 정책 (기획서 v2 17장 7) ──
-  { kind: 'mode', label: '픽셀 스케일링' },
+  {
+    kind: 'select', key: 'pixelScaleMode', label: '픽셀 스케일링', relayout: true,
+    options: [['native', '네이티브'], ['pixel', '저해상도→정수배']],
+  },
   { kind: 'slider', key: 'pixelScaleFactor', label: '픽셀 정수 배율', min: 2, max: 4, step: 1 },
 ];
 
@@ -147,24 +159,25 @@ export class Panel {
       return row;
     }
 
-    if (f.kind === 'mode') {
+    if (f.kind === 'select') {
       const name = document.createElement('span');
       name.textContent = f.label + ' ';
       const select = document.createElement('select');
-      for (const [value, text] of [['native', '네이티브'], ['pixel', '저해상도→정수배']] as const) {
+      for (const [value, text] of f.options) {
         const opt = document.createElement('option');
         opt.value = value;
         opt.textContent = text;
         select.appendChild(opt);
       }
-      select.value = config.pixelScaleMode;
+      select.value = config[f.key];
       select.addEventListener('change', () => {
-        config.pixelScaleMode = select.value as PixelScaleMode;
-        this.onScaleModeChange();
+        if (f.key === 'pixelScaleMode') config.pixelScaleMode = select.value as PixelScaleMode;
+        else config.judgeArea = select.value as JudgeAreaKind;
+        if (f.relayout) this.onScaleModeChange();
       });
       select.addEventListener('pointerdown', (ev) => ev.stopPropagation());
       row.append(name, select);
-      this.syncFns.push(() => { select.value = config.pixelScaleMode; });
+      this.syncFns.push(() => { select.value = config[f.key]; });
       return row;
     }
 
@@ -210,7 +223,9 @@ export class Panel {
       `게이지 ${(sim.gauge * 100).toFixed(0)}%  100%도달 ${sim.gaugeFullAt !== null ? sim.gaugeFullAt.toFixed(1) + 's' : '—'}  도약 ${sim.diveCount}회`,
       `게이지 배율 ${config.gaugeMultiplierEnabled ? 'ON (B안)' : 'OFF (A안·권장)'}`,
       `격파 ${sim.kills}  통과 ${sim.passedCount}  피격 ${sim.hitsTaken}  점수 ${sim.score}`,
-      `활성 적 ${sim.activeEnemyCount()} (체류 ${sim.activeStayCount()}/${config.stayCap}, 링내 ${sim.hittableCount()})`,
+      `판정 영역 ${config.judgeArea === 'band' ? 'B 밴드 (높이 ' + config.bandHeightFrac + ')' : 'A 원형 (반경 ' + config.ringRadiusFrac + ')'}`,
+      `활성 적 ${sim.activeEnemyCount()} (체류 ${sim.activeStayCount()}/${config.stayCap}, 판정내 ${sim.hittableCount()})`,
+      `통과 놓침 ${sim.passedCount}  영역 빗나감 ${sim.missedAreaCount}`,
       `오디오 지연 base ${lat ? lat.base.toFixed(0) : '—'}ms out ${lat ? lat.output.toFixed(0) : '—'}ms`,
     ];
     this.statsEl.textContent = lines.join('\n');

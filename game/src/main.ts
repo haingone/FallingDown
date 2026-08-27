@@ -3,6 +3,7 @@
  * 데스크톱 마우스 드래그는 Pointer Events로 터치와 동일 취급.
  */
 import { Sim, WavePlan } from './core/sim';
+import { CIRCLE_AREA, BAND_AREA } from './core/judgeArea';
 import { Runner } from './core/runner';
 import { GestureClassifier } from './core/classifier';
 import { config } from './core/balance';
@@ -214,6 +215,8 @@ declare global {
       relayout: () => void;
       /** 테스트 전용: 임의 웨이브 플랜으로 격리된 시뮬레이션을 만든다 */
       makeSim: (plan: WavePlan, seed?: number) => Sim;
+      /** 테스트 전용: 판정 영역 전략 직접 접근 (기하 커버리지 프로브) */
+      judge: { circle: typeof CIRCLE_AREA; band: typeof BAND_AREA };
     };
   }
 }
@@ -227,4 +230,5 @@ window.__fd = {
     isolated.girlY = isolated.girlHomeY();
     return isolated;
   },
+  judge: { circle: CIRCLE_AREA, band: BAND_AREA },
 };

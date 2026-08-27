@@ -9,7 +9,10 @@
  * 길이 단위: 1.0 = 화면 폭 (core/field.ts 참조).
  */
 
+import type { JudgeAreaKind } from './judgeArea';
+
 export type PixelScaleMode = 'native' | 'pixel';
+export type { JudgeAreaKind };
 
 export interface BalanceConfig {
   // ── 기획서 v2 7장: 낙하 속도 시스템 (M1 이월, 변경 없음) ──
@@ -61,8 +64,12 @@ export interface BalanceConfig {
   projectileSpeed: number;     // ★ 투사체 속도 (units/s)
 
   // ── 2D 지오메트리 (기획서 v2 4장·17장 5) ──
-  /** 판정 링 반경 — 화면 폭 대비 비율. 기획서 "60~70%"의 해석은 리포트 질문 1 참조 */
+  /** 판정 영역 방식 A/B — 지시문 P1 r2 개정. 'circle' = 원형 링(원안), 'band' = 화면 밴드(AD 권고안) */
+  judgeArea: JudgeAreaKind;
+  /** 판정 링 반경 — 화면 폭 대비 비율. HQ 검수 결정: 기획서 "60~70%"는 **지름** 기준 */
   ringRadiusFrac: number;
+  /** 밴드 높이 — 화면 폭 대비 비율. 초기값은 원 지름과 등가 (r2 지시문) */
+  bandHeightFrac: number;
   /** 소녀 화면 세로 위치 (0=상단, 1=하단). 기획서 4장 "40~45%" */
   girlScreenFrac: number;
   approachSpeed: number;       // ★ 접근 속도 기본 (units/s, ×현재 낙하 속도)
@@ -132,7 +139,9 @@ export const DEFAULT_BALANCE: BalanceConfig = {
   a5Hp: 1,
   projectileSpeed: 0.4,
 
+  judgeArea: 'circle',
   ringRadiusFrac: 0.33,
+  bandHeightFrac: 0.66, // = 원 지름 등가
   girlScreenFrac: 0.42,
   approachSpeed: 0.22,
   spawnMargin: 0.18,

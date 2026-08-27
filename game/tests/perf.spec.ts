@@ -110,11 +110,22 @@ test('HD-2D 최종 웨이브 실시간 FPS 실측 + 픽셀 스케일링 비교',
   await page.evaluate(() => {
     const fd = (window as any).__fd;
     fd.config.pixelScaleMode = 'native';
-    fd.config.contactDamage = 1;
     fd.relayout();
   });
 
-  const out = { native, pixel, pixelBuffer };
+  // 판정 영역 B안(화면 밴드) 장면 캡처 — A/B 시각 비교용
+  await page.evaluate(() => { (window as any).__fd.config.judgeArea = 'band'; });
+  await fastForwardToFinalWave(page);
+  await page.waitForTimeout(2500);
+  await page.screenshot({ path: 'test-results/screens/06-final-wave-band.png' });
+  const band = await sample(page);
+  await page.evaluate(() => {
+    const fd = (window as any).__fd;
+    fd.config.judgeArea = 'circle';
+    fd.config.contactDamage = 1;
+  });
+
+  const out = { native, pixel, band, pixelBuffer };
   fs.writeFileSync('test-results/p1-perf-metrics.json', JSON.stringify(out, null, 2));
   await testInfo.attach('p1-perf-metrics.json', { body: JSON.stringify(out, null, 2), contentType: 'application/json' });
   console.log('[P1] perf metrics', JSON.stringify(out));
