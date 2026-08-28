@@ -1,0 +1,106 @@
+{
+  "characterId": "fallingdown-girl",
+  "engine": "component-row",
+  "game_input": "sprite-sheet-alpha.png",
+  "degraded_static_fallback": false,
+  "curation_applied": false,
+  "frame_variant": "pixel",
+  "sprite_sheet_alpha": "sprite-sheet-alpha.png",
+  "sprite_sheet_alpha_report": "sprite-sheet-alpha.report.json",
+  "base_image": null,
+  "cell": {
+    "shape": "square",
+    "width": 48,
+    "height": 48,
+    "size": 48,
+    "safe_margin": 0
+  },
+  "chroma_key": {
+    "name": "magenta",
+    "hex": "#FF00FF",
+    "rgb": [
+      255,
+      0,
+      255
+    ]
+  },
+  "animation": {
+    "cellWidth": 48,
+    "cellHeight": 48,
+    "columns": 3,
+    "rows": {
+      "fall_closed": {
+        "row": 0,
+        "frames": 3,
+        "fps": 6,
+        "durations_ms": [
+          167,
+          167,
+          167
+        ],
+        "loop": true,
+        "frame_variant": "pixel"
+      },
+      "fall_open": {
+        "row": 1,
+        "frames": 3,
+        "fps": 6,
+        "durations_ms": [
+          167,
+          167,
+          167
+        ],
+        "loop": true,
+        "frame_variant": "pixel"
+      }
+    }
+  },
+  "frame_layout": {
+    "sheetWidth": 144,
+    "sheetHeight": 96,
+    "cellWidth": 48,
+    "cellHeight": 48,
+    "rows": {
+      "fall_closed": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 48,
+          "h": 48
+        },
+        {
+          "x": 48,
+          "y": 0,
+          "w": 48,
+          "h": 48
+        },
+        {
+          "x": 96,
+          "y": 0,
+          "w": 48,
+          "h": 48
+        }
+      ],
+      "fall_open": [
+        {
+          "x": 0,
+          "y": 48,
+          "w": 48,
+          "h": 48
+        },
+        {
+          "x": 48,
+          "y": 48,
+          "w": 48,
+          "h": 48
+        },
+        {
+          "x": 96,
+          "y": 48,
+          "w": 48,
+          "h": 48
+        }
+      ]
+    }
+  }
+}
