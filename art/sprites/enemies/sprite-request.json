@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "kind": "sprite-gen-request",
+  "engine": "component-row",
+  "character": {
+    "id": "fallingdown-enemies",
+    "description": "FallingDown P1.5 enemies sprites"
+  },
+  "cell": {
+    "shape": "square",
+    "width": 32,
+    "height": 32,
+    "size": 32,
+    "safe_margin": 0
+  },
+  "chroma_key": {
+    "name": "magenta",
+    "hex": "#FF00FF",
+    "rgb": [
+      255,
+      0,
+      255
+    ]
+  },
+  "states": {
+    "a1_fly": {
+      "frames": 2,
+      "fps": 6,
+      "loop": true,
+      "action": "a-1 flight"
+    },
+    "a3_fly": {
+      "frames": 2,
+      "fps": 6,
+      "loop": true,
+      "action": "a-3 flight (a-1 small variant, formation)"
+    }
+  }
+}

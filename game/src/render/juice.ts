@@ -13,6 +13,7 @@
  */
 import * as THREE from 'three';
 import { config } from '../core/balance';
+import * as PAL from './palette';
 
 const MAX_DEBRIS = 260;
 const MAX_SPARKS = 140;
@@ -255,9 +256,16 @@ export class JuiceFx {
     const color = new THREE.Color(colorHex);
     const life = Math.max(0.05, config.burstLifeSec);
 
-    // 1. 파편 버스트 (적 색상) + 흰 코어 스파크
-    if (config.burstDebrisCount > 0) {
-      this.emit(this.debris, Math.round(config.burstDebrisCount), x, y, color, dirX, dirY, 1, 0.006, 0.016, life);
+    // 1. 파편 버스트 — 적 본체 색에서 채취, 20%만 명도 점프 (fx_palette §2.3)
+    const total = Math.round(config.burstDebrisCount);
+    if (total > 0) {
+      const lit = Math.round(total * PAL.DEBRIS_HIGHLIGHT_RATIO);
+      if (total - lit > 0) {
+        this.emit(this.debris, total - lit, x, y, color, dirX, dirY, 1, 0.006, 0.016, life);
+      }
+      if (lit > 0) {
+        this.emit(this.debris, lit, x, y, new THREE.Color(PAL.DEBRIS_HIGHLIGHT), dirX, dirY, 1.15, 0.006, 0.014, life);
+      }
     }
     if (config.burstSparkCount > 0) {
       this.emit(this.sparks, Math.round(config.burstSparkCount), x, y, new THREE.Color(0xffffff), dirX, dirY, 1.6, 0.004, 0.009, life * 0.6);
@@ -268,7 +276,8 @@ export class JuiceFx {
       const fl = this.flashes.find(f => f.life <= 0) ?? this.flashes[0];
       fl.mesh.position.set(x, y, fl.mesh.position.z);
       fl.mesh.scale.setScalar(spriteSize * 3.2);
-      (fl.mat.uniforms.uColor.value as THREE.Color).copy(color);
+      // 임팩트 코어는 화이트 (fx_palette §2.3 — 1프레임 한정, §1 화이트 예약)
+      (fl.mat.uniforms.uColor.value as THREE.Color).setHex(PAL.WHITE);
       fl.maxLife = 0.09;
       fl.life = fl.maxLife;
       fl.mesh.visible = true;

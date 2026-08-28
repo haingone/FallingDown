@@ -1,65 +1,53 @@
-# art/sprites/ — 게임 반입 스프라이트 (P1.5 §B-1)
+# art/sprites — 게임 반입용 스프라이트 (P1.5)
 
-이 폴더는 **AD가 산출한 Sprite-Gen 출력물을 게임이 직접 읽는 반입 지점**이다.
-개발 세션은 이 폴더를 **읽기만** 한다 (산출은 AD 세션, 머지는 HQ 소관).
+> 산출: AD 세션 / 2026-08-28 · 지시 `P1_5_pixel_mockup.md` §A-2
+> 소스: `art/characters_v1/` v1r3 (사용자 승인본), `art/concept_pixel_2head/PX6_enemy_sheet.png`
+> 개발 세션 반입: `git checkout origin/claude/art-director -- art/sprites/ docs/art/fx_palette_p15.md docs/art/background_p15.md`
 
-- 여기에 `manifest.json` + 시트 PNG를 넣으면 게임이 **자동으로** 실루엣 플레이스홀더를 대체한다.
-- **비어 있어도 정상 동작한다** — 로더가 조용히 실패하고 기존 실루엣이 유지된다 (점진 적용).
-- 빌드 시 `dist/sprites/` 로 복사되고, 개발 서버에서는 `/sprites/` 로 서빙된다
-  (`game/vite.config.ts` 의 `fd-sprite-assets` 플러그인).
+## 내용
 
-## manifest.json 규격
+| 경로 | 셀 | 상태 | 프레임 |
+|---|---|---|---|
+| `girl/` | 48×48 | `fall_closed` (우산 접음) | 3 |
+| | | `fall_open` (우산 펼침) | 3 |
+| `enemies/` | 32×32 | `a1_fly` | 2 |
+| | | `a3_fly` (a-1 소형 변형·편대용) | 2 |
 
-**주의:** Sprite-Gen 실제 출력 스키마를 개발 세션이 아직 확인하지 못했다.
-아래는 로더가 기대하는 정본 형식이고, 로더는 흔한 표기 변형도 함께 수용한다(아래 "수용하는 변형").
-**AD 산출물이 오면 그 실제 형식을 정본으로 삼고 로더를 좁힌다** — 형식이 달라도 대개 그대로 읽히지만,
-읽히지 않으면 브라우저 콘솔에 `[sprites]` 경고가 남고 실루엣이 유지되므로 즉시 알 수 있다.
+각 폴더: `sprite-sheet-alpha.png` + `manifest.json` (+ `sprite-request.json`, `*.report.json`).
+Sprite-Gen `compose_sprite_atlas` 출력 그대로 — 이것이 개발 반입 규격이다.
 
-```json
-{
-  "sheet": "sprite-sheet-alpha.png",
-  "cellSize": 48,
-  "fps": 6,
-  "clips": {
-    "girl.folded": { "frames": [{ "x": 0,  "y": 0, "w": 48, "h": 48 }] },
-    "girl.open":   { "frames": [{ "x": 48, "y": 0, "w": 48, "h": 48 }] },
-    "a-1":         { "frames": [{ "x": 0,  "y": 48, "w": 32, "h": 32 },
-                                { "x": 32, "y": 48, "w": 32, "h": 32 }], "fps": 8 },
-    "a-3":         { "frames": [{ "x": 64, "y": 48, "w": 24, "h": 24 }] }
-  }
-}
-```
+## 규격 준수 실측
 
-- 좌표 원점은 **시트 좌상단**, 단위는 픽셀 (로더가 three.js UV로 변환한다).
-- 프레임이 2장 이상이면 `fps`로 순환 재생한다. P1.5 범위는 **스탠스당 1~2프레임**.
-- 셀 종횡비는 자유 — 메시가 프레임 비율에 맞춰 늘어난다 (정사각형이 아니어도 된다).
+| 계약 | 실측 |
+|---|---|
+| 48×48 (소녀) | ✅ 셀 48×48, 아틀라스 144×96 |
+| 공유 팔레트 32~48색 | ✅ **38색** (girl 32 + enemies 14, 두 시트 공유) |
+| 알파 배경 | ✅ 알파값 {0, 255} 이진 — 소프트 프린지 없음 |
+| 아웃라인 없음 (소녀) | ✅ |
+| 아웃라인 없음 (적) | ⚠️ **미준수** — 아래 참조 |
+| 프레임 최소 (정지 1 + 흔들림 2 이내) | ✅ 소녀 3F / 적 2F |
 
-### 인식하는 클립 키
+## 제작 경로 (재현 가능)
 
-| 키 | 대상 | P1.5 필수 |
-|---|---|---|
-| `girl.folded` | 소녀 — 우산 접음(가속) 스탠스 | ✅ |
-| `girl.open` | 소녀 — 우산 펼침(감속·검) 스탠스 | ✅ |
-| `a-1` | 하급 통과형 | ✅ |
-| `a-3` | 하급 편대형 (a-1 소형 변형) | ✅ |
-| `a-2` / `a-4` / `a-5` | 나머지 적 | 선택 (없으면 해당 적만 실루엣 유지) |
+1. v1r3 시트에서 포즈 크롭 → 배경 그레이 컬러키 → 알파
+2. Sprite-Gen `_kcentroid_downscale(detail_bias=True)` 로 셀 콘텐츠 높이까지 축소
+3. `binarize_alpha` → 전 프레임 대상 `build_shared_palette(40)` → `apply_palette`
+4. 셀 배치 (소녀 bottom 정렬 · 적 center 정렬) → `frames/` 런 디렉터리 구성
+5. `compose_sprite_atlas.py --run-dir` → 시트 + manifest
 
-키는 대소문자를 구분하지 않으며 `girl_folded`, `a1` 같은 표기도 받는다.
+**pixel_unfake 격자 스냅은 쓰지 않았다.** `detect_pixel_grid` 가 v1r3 시트와 PX6 양쪽에서
+격자 확신 없음(`(1.0,1.0)`)을 반환했다 — Seedream 출력의 블록 경계가 스냅에 필요한 만큼
+또렷하지 않다. 이 경우의 정규 경로인 `fit.resample=kcentroid` 를 사용했다
+(`docs/pixel-unfake.md`: "keeps 1px outlines readable when the generated art's implied pixel
+grid does not match the target cell").
 
-### 수용하는 변형
+## 알려진 편차 (HQ 보고 대상)
 
-- 시트 파일명 키: `sheet` / `image` / `file`
-- 클립 컨테이너 키: `clips` / `animations` / `states`
-- 프레임 사각형: `{x,y,w,h}` / `{x,y,width,height}` / `{frame:{...}}`
-- 클립이 프레임 배열 대신 `{ "row": 0, "count": 2 }` 형태여도 `cellSize`가 있으면 계산한다
-
-## 확인 방법
-
-`npm run dev` 후 브라우저 콘솔에 다음이 뜨면 반입 성공이다:
-
-```
-[sprites] 반입 완료: 4클립 / 6프레임 (sprite-sheet-alpha.png 128×96)
-```
-
-튜닝 패널(⚙) 통계에도 `스프라이트 시트 4클립/6프레임 128×96` 로 표시된다.
-미반입 상태에서는 `스프라이트 실루엣(미반입)` 이다.
+1. **적 스프라이트에 1px 다크 아웃라인이 남아 있다.** 소스인 PX6 컨셉이 아웃라인을 두르고
+   그려졌고, 크롭 반입 경로에서는 제거할 수 없다. 실사용상 적은 어두운 색이고 배경은 밝은
+   시안이므로 아웃라인이 실루엣 경계와 겹쳐 시각적 문제는 없으나, **"아웃라인 없음" 계약과는
+   불일치**다. P2에서 적 시트를 v1r3 기준으로 재생성할 때 해소한다.
+2. **`fall_open` 의 흔들림 2프레임은 절차적 생성물**이다 — 시트에 펼침 스탠스의 연속 프레임이
+   1컷만 있어, 정지 프레임을 세로 ±1px 이동한 아이들 보브로 만들었다. 내용을 지어내지 않았고
+   P1.5의 "미세 흔들림" 범위 안이다. 본 애니메이션은 P2에서 제작한다.
+3. **적은 좌향, 소녀는 우향**이다. 런타임에서 필요한 쪽을 플립해 쓴다.

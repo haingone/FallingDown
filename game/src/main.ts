@@ -45,7 +45,7 @@ const panel = new Panel(
       drawCalls: renderer.drawCalls(),
       overdraw: renderer.overdrawEstimate(),
       particles: renderer.activeParticles(),
-      sprites: s.loaded ? `시트 ${s.clips}클립/${s.frames}프레임 ${s.size}` : '실루엣(미반입)',
+      sprites: s.loaded ? `${s.clips}클립/${s.frames}F [${s.keys.join(',')}]` : '실루엣(미반입)',
     };
   },
   () => sim.restart(),

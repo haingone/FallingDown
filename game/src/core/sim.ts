@@ -363,6 +363,9 @@ export class Sim {
   }
 
   private damagePlayer(dmg: number): void {
+    // 0 피해는 피격이 아니다 — 무적·연출·콤보 리셋 어느 것도 발동하지 않는다
+    // (측정용으로 contactDamage=0을 쓸 때 피격 플래시가 화면을 물들이던 문제)
+    if (dmg <= 0) return;
     if (this.invulnTimer > 0 || this.diveActive) return;
     if (this.state !== 'playing' && this.state !== 'rest') return;
     this.hp -= dmg;

@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "kind": "sprite-gen-request",
+  "engine": "component-row",
+  "character": {
+    "id": "fallingdown-girl",
+    "description": "FallingDown P1.5 girl sprites"
+  },
+  "cell": {
+    "shape": "square",
+    "width": 48,
+    "height": 48,
+    "size": 48,
+    "safe_margin": 0
+  },
+  "chroma_key": {
+    "name": "magenta",
+    "hex": "#FF00FF",
+    "rgb": [
+      255,
+      0,
+      255
+    ]
+  },
+  "states": {
+    "fall_closed": {
+      "frames": 3,
+      "fps": 6,
+      "loop": true,
+      "action": "side-view fall, umbrella closed"
+    },
+    "fall_open": {
+      "frames": 3,
+      "fps": 6,
+      "loop": true,
+      "action": "side-view fall, umbrella open"
+    }
+  }
+}

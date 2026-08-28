@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import type { Stance } from '../core/sim';
 import { config } from '../core/balance';
+import * as PAL from './palette';
 
 const MAX_SEG = 40;               // 리본 분할 수
 const POOL_SIZE = 6;
@@ -95,7 +96,7 @@ export class SlashTrails {
         fragmentShader: FRAG,
         uniforms: {
           uAge: { value: 1 },
-          uEdgeColor: { value: new THREE.Color(0x9fd8ff) },
+          uEdgeColor: { value: new THREE.Color(PAL.COLD_CYAN) },
           uCoreWidth: { value: 0.45 },
         },
         transparent: true,
@@ -158,7 +159,9 @@ export class SlashTrails {
     r.pos.needsUpdate = true;
     r.mat.uniforms.uAge.value = 0;
     r.mat.uniforms.uCoreWidth.value = isUmbrella ? 0.42 : 0.62; // 검은 코어 비중이 커 더 예리해 보인다
-    (r.mat.uniforms.uEdgeColor.value as THREE.Color).setHex(isUmbrella ? 0x9fd8ff : 0xffe6a8);
+    // **우산/검 구분은 색이 아니라 형태**다 (fx_palette §2.2) — 양쪽 모두 콜드 시안 계열.
+    // 우산은 바깥으로 갈수록 저명도 시안, 검은 고명도 시안 단색.
+    (r.mat.uniforms.uEdgeColor.value as THREE.Color).setHex(isUmbrella ? PAL.CYAN_DEEP : PAL.COLD_CYAN);
     r.mesh.visible = true;
     r.maxLife = Math.max(0.05, config.slashLifeSec);
     r.life = r.maxLife;

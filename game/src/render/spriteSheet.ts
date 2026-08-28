@@ -17,7 +17,38 @@ export interface SpriteFrame {
   texture: THREE.Texture;
   /** 가로/세로 비 — 스프라이트 셀 비율에 맞춰 메시를 늘린다 */
   aspect: number;
+  /**
+   * 그림이 향하는 방향(라디안). 진행 방향으로 회전시킬 때 이 값을 빼서 보정한다.
+   * 실루엣 플레이스홀더 = +Y(위, PI/2), AD 적 스프라이트 = -X(왼쪽, PI).
+   */
+  facing: number;
+  /** 반입 시트에서 온 프레임인가 (false = 런타임 실루엣 폴백) */
+  fromAtlas: boolean;
 }
+
+/** 스프라이트 소스 한 벌 (Sprite-Gen 산출 폴더 하나) */
+interface SpriteSource {
+  dir: string;
+  /** Sprite-Gen 클립명 → 게임 클립 키 */
+  map: Record<string, ClipKey>;
+  /** 그림이 향하는 방향 */
+  facing: number;
+}
+
+/** AD 산출 폴더 구성 (`art/sprites/README.md` 기준) */
+const SOURCES: SpriteSource[] = [
+  {
+    dir: 'girl/',
+    map: { fall_closed: 'girl.folded', fall_open: 'girl.open' },
+    facing: Math.PI / 2, // 소녀는 회전시키지 않으므로 값 자체는 쓰이지 않는다
+  },
+  {
+    dir: 'enemies/',
+    // a-2는 a-1 시트를, a-4·a-5는 전용 시트가 없어 실루엣을 유지한다 (P1.5 범위: a-1·a-3)
+    map: { a1_fly: 'a-1', a3_fly: 'a-3' },
+    facing: Math.PI, // 적 그림은 좌향 (AD README "적은 좌향, 소녀는 우향")
+  },
+];
 
 export interface SpriteClip {
   frames: SpriteFrame[];
@@ -26,9 +57,8 @@ export interface SpriteClip {
 
 export interface SpriteAtlas {
   clips: Map<ClipKey, SpriteClip>;
-  sheetFile: string;
-  sheetWidth: number;
-  sheetHeight: number;
+  /** 반입된 시트 목록 ("girl/sprite-sheet-alpha.png 144×96" 형태) */
+  sheets: string[];
   frameCount: number;
 }
 
@@ -100,42 +130,55 @@ function findClipEntry(
 }
 
 /**
- * 스프라이트 아틀라스 로드. 실패(파일 없음·형식 불일치)하면 null — 호출측은 실루엣을 유지한다.
- * @param baseUrl 기본 './sprites/' (vite base 상대 — 하위 경로 배포에서도 동작)
+ * 소스 한 벌을 읽어 클립을 out에 채운다. 실패하면 아무것도 하지 않는다.
+ * @returns 읽어들인 프레임 수 (0 = 실패·미반입)
  */
-export async function loadSpriteAtlas(baseUrl = './sprites/'): Promise<SpriteAtlas | null> {
+async function loadSource(
+  baseUrl: string, src: SpriteSource, out: Map<ClipKey, SpriteClip>, seen: string[],
+): Promise<number> {
+  const base = `${baseUrl}${src.dir}`;
   let manifest: Record<string, unknown>;
   try {
-    const res = await fetch(`${baseUrl}manifest.json`, { cache: 'no-cache' });
-    if (!res.ok) return null;
+    const res = await fetch(`${base}manifest.json`, { cache: 'no-cache' });
+    if (!res.ok) return 0;
     manifest = await res.json();
   } catch {
-    return null; // 아직 반입 전 — 정상 경로
+    return 0; // 아직 반입 전 — 정상 경로
   }
 
   const sheetFile =
+    (typeof manifest.sprite_sheet_alpha === 'string' && manifest.sprite_sheet_alpha) ||
+    (typeof manifest.game_input === 'string' && manifest.game_input) ||
     (typeof manifest.sheet === 'string' && manifest.sheet) ||
     (typeof manifest.image === 'string' && manifest.image) ||
     (typeof manifest.file === 'string' && manifest.file) ||
     'sprite-sheet-alpha.png';
 
-  const cell = num(manifest.cellSize) ?? num(manifest.cell) ?? 0;
-  const cellW = num(manifest.cellWidth) ?? cell;
-  const cellH = num(manifest.cellHeight) ?? cell;
+  // Sprite-Gen 표준 출력: animation.{cellWidth,cellHeight,rows} + frame_layout.rows
+  const animation = manifest.animation as Record<string, unknown> | undefined;
+  const layout = manifest.frame_layout as Record<string, unknown> | undefined;
+  const cellObj = manifest.cell as Record<string, unknown> | undefined;
+
+  const cell = num(manifest.cellSize) ?? (cellObj ? num(cellObj.size) : null) ?? 0;
+  const cellW = num(manifest.cellWidth) ?? (animation ? num(animation.cellWidth) : null)
+    ?? (layout ? num(layout.cellWidth) : null) ?? (cellObj ? num(cellObj.width) : null) ?? cell;
+  const cellH = num(manifest.cellHeight) ?? (animation ? num(animation.cellHeight) : null)
+    ?? (layout ? num(layout.cellHeight) : null) ?? (cellObj ? num(cellObj.height) : null) ?? cell;
   const defaultFps = num(manifest.fps) ?? 6;
 
-  const clipSource =
-    (manifest.clips as Record<string, unknown> | undefined) ??
-    (manifest.animations as Record<string, unknown> | undefined) ??
-    (manifest.states as Record<string, unknown> | undefined);
-  if (!clipSource || typeof clipSource !== 'object') return null;
+  /** 클립 정의 컨테이너 — frame_layout.rows(정확한 사각형)를 최우선으로 쓴다 */
+  const rectSource = (layout?.rows ?? null) as Record<string, unknown> | null;
+  const metaSource = (animation?.rows ?? manifest.clips ?? manifest.animations ?? manifest.states ?? null) as
+    Record<string, unknown> | null;
+  const clipSource = rectSource ?? metaSource;
+  if (!clipSource || typeof clipSource !== 'object') return 0;
 
   let texture: THREE.Texture;
   try {
-    texture = await new THREE.TextureLoader().loadAsync(`${baseUrl}${sheetFile}`);
+    texture = await new THREE.TextureLoader().loadAsync(`${base}${sheetFile}`);
   } catch {
-    console.warn('[sprites] 시트 PNG 로드 실패 — 실루엣 유지:', sheetFile);
-    return null;
+    console.warn('[sprites] 시트 PNG 로드 실패 — 실루엣 유지:', `${src.dir}${sheetFile}`);
+    return 0;
   }
   // 픽셀 아트: 확대 시 보간 금지
   texture.magFilter = THREE.NearestFilter;
@@ -143,19 +186,30 @@ export async function loadSpriteAtlas(baseUrl = './sprites/'): Promise<SpriteAtl
   texture.generateMipmaps = false;
   texture.colorSpace = THREE.SRGBColorSpace;
 
-  const sheetW = texture.image?.width ?? 0;
-  const sheetH = texture.image?.height ?? 0;
-  if (sheetW <= 0 || sheetH <= 0) return null;
+  const sheetW = (layout ? num(layout.sheetWidth) : null) ?? texture.image?.width ?? 0;
+  const sheetH = (layout ? num(layout.sheetHeight) : null) ?? texture.image?.height ?? 0;
+  if (sheetW <= 0 || sheetH <= 0) return 0;
 
-  const clips = new Map<ClipKey, SpriteClip>();
   let frameCount = 0;
+  // Sprite-Gen 클립명(fall_closed 등) → 게임 키 매핑을 우선 적용하고,
+  // 매핑에 없으면 게임 키 별칭으로도 한 번 더 찾아본다 (다른 산출 경로 대비)
+  const pairs: [string, ClipKey][] = Object.entries(src.map);
   for (const key of Object.keys(CLIP_ALIASES) as ClipKey[]) {
-    const entry = findClipEntry(clipSource, key);
-    if (entry === null) continue;
+    if (!pairs.some(([, v]) => v === key)) pairs.push([key, key]);
+  }
+
+  for (const [sourceName, key] of pairs) {
+    if (out.has(key)) continue; // 먼저 읽은 소스가 우선
+    const entry = clipSource[sourceName] ?? findClipEntry(clipSource, key);
+    if (entry === null || entry === undefined) continue;
     const rects = readFrames(entry, cellW, cellH);
     if (rects.length === 0) continue;
 
-    const fps = (typeof entry === 'object' && entry !== null ? num((entry as Record<string, unknown>).fps) : null) ?? defaultFps;
+    const meta = (metaSource?.[sourceName] ?? null) as Record<string, unknown> | null;
+    const fps = (meta ? num(meta.fps) : null)
+      ?? (typeof entry === 'object' && !Array.isArray(entry) ? num((entry as Record<string, unknown>).fps) : null)
+      ?? defaultFps;
+
     const frames: SpriteFrame[] = rects.map((r) => {
       // 프레임마다 offset/repeat만 다른 클론 — three.js 클론은 .source를 공유하므로 GPU 업로드는 1회
       const t = texture.clone();
@@ -163,16 +217,33 @@ export async function loadSpriteAtlas(baseUrl = './sprites/'): Promise<SpriteAtl
       t.repeat.set(r.w / sheetW, r.h / sheetH);
       // three.js UV 원점은 좌하단, 시트 좌표는 좌상단 기준
       t.offset.set(r.x / sheetW, 1 - (r.y + r.h) / sheetH);
-      return { texture: t, aspect: r.h > 0 ? r.w / r.h : 1 };
+      return { texture: t, aspect: r.h > 0 ? r.w / r.h : 1, facing: src.facing, fromAtlas: true };
     });
     frameCount += frames.length;
-    clips.set(key, { frames, fps: Math.max(1, fps) });
+    out.set(key, { frames, fps: Math.max(1, fps) });
+  }
+
+  if (frameCount > 0) seen.push(`${src.dir}${sheetFile} ${sheetW}×${sheetH}`);
+  return frameCount;
+}
+
+/**
+ * 스프라이트 아틀라스 로드 (AD 산출 폴더 전부).
+ * 실패(파일 없음·형식 불일치)하면 null — 호출측은 실루엣을 유지한다.
+ * @param baseUrl 기본 './sprites/' (vite base 상대 — 하위 경로 배포에서도 동작)
+ */
+export async function loadSpriteAtlas(baseUrl = './sprites/'): Promise<SpriteAtlas | null> {
+  const clips = new Map<ClipKey, SpriteClip>();
+  const seen: string[] = [];
+  let frameCount = 0;
+  for (const src of SOURCES) {
+    frameCount += await loadSource(baseUrl, src, clips, seen);
   }
 
   if (clips.size === 0) {
-    console.warn('[sprites] manifest에서 인식 가능한 클립을 찾지 못함 — 실루엣 유지');
+    console.warn('[sprites] 반입 가능한 클립 없음 — 실루엣 유지');
     return null;
   }
-  console.info(`[sprites] 반입 완료: ${clips.size}클립 / ${frameCount}프레임 (${sheetFile} ${sheetW}×${sheetH})`);
-  return { clips, sheetFile, sheetWidth: sheetW, sheetHeight: sheetH, frameCount };
+  console.info(`[sprites] 반입 완료: ${clips.size}클립 / ${frameCount}프레임 (${seen.join(', ')})`);
+  return { clips, sheets: seen, frameCount };
 }

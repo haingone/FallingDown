@@ -7,10 +7,26 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 /** AD 산출 스프라이트 반입 경로 (저장소 루트 art/sprites) — 개발 세션은 읽기만 한다 */
 const SPRITE_DIR = path.resolve(here, '../art/sprites');
 const SERVED_EXT = new Set(['.png', '.json']);
+/**
+ * 배포본에 실을 파일 — 런타임이 실제로 읽는 것만.
+ * Sprite-Gen 이력 파일(`sprite-request.json`, `*.report.json`)은 저장소에는 남기되 번들에서 제외한다.
+ */
+function isRuntimeAsset(rel: string): boolean {
+  const name = path.basename(rel);
+  if (name.endsWith('.png')) return true;
+  return name === 'manifest.json';
+}
 
-function listSprites(): string[] {
-  if (!fs.existsSync(SPRITE_DIR)) return [];
-  return fs.readdirSync(SPRITE_DIR).filter((f) => SERVED_EXT.has(path.extname(f).toLowerCase()));
+/** art/sprites 하위를 재귀 순회 (AD 산출물은 girl/ · enemies/ 폴더로 나뉜다) */
+function listSprites(dir = SPRITE_DIR, prefix = ''): string[] {
+  if (!fs.existsSync(dir)) return [];
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) out.push(...listSprites(path.join(dir, entry.name), rel));
+    else if (SERVED_EXT.has(path.extname(entry.name).toLowerCase())) out.push(rel);
+  }
+  return out;
 }
 
 /**
@@ -23,9 +39,9 @@ function spriteAssets(): Plugin {
     name: 'fd-sprite-assets',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        const m = /^\/sprites\/([^/?#]+)/.exec(req.url ?? '');
+        const m = /^\/sprites\/([^?#]+)/.exec(req.url ?? '');
         if (!m) return next();
-        const file = path.join(SPRITE_DIR, m[1]);
+        const file = path.join(SPRITE_DIR, decodeURIComponent(m[1]));
         if (!file.startsWith(SPRITE_DIR) || !fs.existsSync(file)) {
           res.statusCode = 404;
           res.end('sprite asset not found');
@@ -36,7 +52,7 @@ function spriteAssets(): Plugin {
       });
     },
     generateBundle() {
-      for (const f of listSprites()) {
+      for (const f of listSprites().filter(isRuntimeAsset)) {
         this.emitFile({
           type: 'asset',
           fileName: `sprites/${f}`,

@@ -181,14 +181,14 @@ export class SpriteTextures {
   }
 
   /** 반입 상태 (패널·리포트 표시용) */
-  atlasInfo(): { loaded: boolean; clips: number; frames: number; sheet: string; size: string } {
-    if (!this.atlas) return { loaded: false, clips: 0, frames: 0, sheet: '—', size: '—' };
+  atlasInfo(): { loaded: boolean; clips: number; frames: number; sheets: string[]; keys: string[] } {
+    if (!this.atlas) return { loaded: false, clips: 0, frames: 0, sheets: [], keys: [] };
     return {
       loaded: true,
       clips: this.atlas.clips.size,
       frames: this.atlas.frameCount,
-      sheet: this.atlas.sheetFile,
-      size: `${this.atlas.sheetWidth}×${this.atlas.sheetHeight}`,
+      sheets: this.atlas.sheets,
+      keys: [...this.atlas.clips.keys()],
     };
   }
 
@@ -203,14 +203,14 @@ export class SpriteTextures {
   girl(open: boolean, timeSec: number): SpriteFrame {
     const fromAtlas = this.clipFrame(open ? 'girl.open' : 'girl.folded', timeSec);
     if (fromAtlas) return fromAtlas;
-    return { texture: open ? this.girlOpen : this.girlFolded, aspect: GIRL_ASPECT };
+    return { texture: open ? this.girlOpen : this.girlFolded, aspect: GIRL_ASPECT, facing: Math.PI / 2, fromAtlas: false };
   }
 
-  /** 적 스프라이트 */
+  /** 적 스프라이트. 전용 시트가 없는 타입은 실루엣이 유지된다 (P1.5 범위: a-1·a-3) */
   enemy(type: EnemyType, timeSec = 0): SpriteFrame {
     const fromAtlas = this.clipFrame(type as ClipKey, timeSec);
     if (fromAtlas) return fromAtlas;
-    return { texture: this.enemySilhouette(type), aspect: ENEMY_ASPECT };
+    return { texture: this.enemySilhouette(type), aspect: ENEMY_ASPECT, facing: Math.PI / 2, fromAtlas: false };
   }
 
   /** 실루엣 원본 (격파 고스트 등 정지 이미지용) */
