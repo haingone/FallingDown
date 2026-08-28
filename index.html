@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>FallingDown — M1 graybox</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #05070d;
+      overflow: hidden;
+      touch-action: none;
+      overscroll-behavior: none;
+      -webkit-user-select: none; user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      font-family: -apple-system, "Apple SD Gothic Neo", sans-serif;
+      color: #dde;
+    }
+    /* 세로 고정 스테이지: 9:16 기준, 노치/비율 변형은 레터박스로 대응 */
+    #stage {
+      position: absolute;
+      left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      overflow: hidden;
+      background: #101622;
+    }
+    #game-canvas { position: absolute; left: 0; top: 0; display: block; }
+
+    /* ── HUD ── */
+    #hud { position: absolute; inset: 0; pointer-events: none; }
+    #hud-hp { position: absolute; top: max(8px, env(safe-area-inset-top)); left: 10px; display: flex; gap: 4px; }
+    .hp { width: 22px; height: 20px; border-radius: 4px; }
+    .hp.on { background: #ff4466; box-shadow: 0 0 6px #ff446699; }
+    .hp.off { background: #333a4a; }
+    #hud-right { position: absolute; top: max(8px, env(safe-area-inset-top)); right: 10px; font-size: 26px; font-weight: 800; text-shadow: 0 0 8px #000; }
+    #hud-mult { display: inline-block; transform-origin: right center; will-change: transform; }
+    #hud-combo { font-size: 16px; color: #ffd24d; }
+    #hud-wave { position: absolute; top: max(8px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); font-size: 12px; opacity: 0.65; }
+    #hud-gauge {
+      position: absolute; bottom: max(14px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
+      width: 46%; height: 44px; border: 2px solid #4a5a7a; border-radius: 22px;
+      overflow: hidden; pointer-events: auto; background: #141a28cc;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #hud-gauge-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0%; background: #3a7bd5; transition: width 80ms linear; }
+    #hud-gauge-text { position: relative; font-weight: 800; font-size: 16px; text-shadow: 0 0 6px #000; }
+    #hud-gauge.full { border-color: #ffd24d; animation: glow 0.7s infinite alternate; }
+    #hud-gauge.full #hud-gauge-fill { background: #d5a53a; }
+    #hud-gauge.diving #hud-gauge-fill { background: #ffcc33; width: 100% !important; }
+    @keyframes glow { from { box-shadow: 0 0 6px #ffd24d88; } to { box-shadow: 0 0 22px #ffd24d; } }
+    #hud-banner {
+      position: absolute; left: 0; right: 0; top: 38%; text-align: center;
+      font-size: 34px; font-weight: 900; letter-spacing: 2px; opacity: 0; transition: opacity 0.3s;
+      text-shadow: 0 0 16px #000;
+    }
+    #hud-banner.show { opacity: 1; }
+    #hud-banner.clear { color: #7dffb0; }
+    #hud-banner.fail { color: #ff5566; }
+    #hud-flash { position: absolute; inset: 0; background: #ff2233; opacity: 0; pointer-events: none; }
+
+    /* ── 성능 통계 미니 오버레이 (?stats=1) ── */
+    #stats-overlay {
+      position: absolute; left: 8px; bottom: max(70px, calc(env(safe-area-inset-bottom) + 70px));
+      background: #0c101ac9; border: 1px solid #333a4a; border-radius: 6px;
+      padding: 5px 9px; font-size: 11px; line-height: 1.5; color: #9fd;
+      pointer-events: none; z-index: 9; font-variant-numeric: tabular-nums;
+    }
+    #stats-overlay b { font-size: 20px; color: #7dffb0; margin-right: 4px; }
+    #stats-overlay span { display: inline-block; margin-left: 8px; opacity: 0.85; }
+
+    /* ── 튜닝 패널 ── */
+    #panel { position: absolute; top: 0; right: 0; bottom: 0; pointer-events: none; z-index: 10; }
+    #panel-toggle {
+      position: absolute; top: 44px; right: 8px; width: 36px; height: 36px;
+      border-radius: 50%; border: 1px solid #4a5a7a; background: #141a28dd; color: #dde;
+      font-size: 18px; pointer-events: auto;
+    }
+    #panel-body {
+      position: absolute; top: 84px; right: 4px; width: 240px; max-height: calc(100% - 150px);
+      overflow-y: auto; background: #0c101add; border: 1px solid #333a4a; border-radius: 8px;
+      padding: 8px; display: none; pointer-events: auto; font-size: 11px;
+    }
+    #panel.open #panel-body { display: block; }
+    #panel-stats { font-size: 10px; line-height: 1.5; color: #9fd; white-space: pre-wrap; margin-bottom: 8px; }
+    .panel-row { display: block; margin-bottom: 6px; }
+    .panel-row b { color: #ffd24d; margin-left: 4px; }
+    .panel-row input[type=range] { width: 100%; }
+    .panel-row input.panel-check { vertical-align: middle; width: 16px; height: 16px; }
+    .panel-row select { background: #223; color: #dde; border: 1px solid #4a5a7a; border-radius: 4px; padding: 2px 4px; }
+    .panel-row button { margin-right: 6px; padding: 4px 10px; background: #223; color: #dde; border: 1px solid #4a5a7a; border-radius: 4px; }
+  </style>
+  <script type="module" crossorigin src="./assets/index-ikeXIS5s.js"></script>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="game-canvas"></canvas>
+  </div>
+</body>
+</html>
